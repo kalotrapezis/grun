@@ -88,10 +88,12 @@ const EMB_APPICON_512: &[u8] =
 // Surfaces are solid (Mint-Y has no transparency by default); `alpha()` is only
 // used for subtle borders and muted text that composite over those solid colours.
 const CSS: &str = r#"
-window {
-    /* The window surface is transparent so the shell below can cast a drop
-       shadow out into the margin — that shadow is what separates grun from the
-       windows behind it. Needs a compositor (Cinnamon runs one by default). */
+/* Only the launcher window is transparent — so the shell below can cast a drop
+   shadow out into the margin, separating grun from the windows behind it. Needs
+   a compositor (Cinnamon runs one by default). The settings window keeps the
+   theme's normal opaque background; scoping to .grun-main avoids leaking the
+   transparency onto it. */
+window.grun-main {
     background-color: transparent;
     color: @theme_fg_color;
 }
@@ -393,6 +395,8 @@ fn build_app(app: &Application) -> Rc<dyn Fn()> {
         .resizable(false)
         .child(&vbox)
         .build();
+    // Scopes the transparent-surface CSS to the launcher, not the settings window.
+    window.add_css_class("grun-main");
 
     // Hide (don't destroy) when the window is closed, so the app stays resident.
     window.connect_close_request(|w| {

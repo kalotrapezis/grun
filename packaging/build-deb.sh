@@ -6,11 +6,15 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 
 VERSION="$(grep -m1 '^version' Cargo.toml | cut -d'"' -f2)"
+# Debian packaging revision (appended as -N). Bump for packaging/build fixes
+# that don't change the upstream Cargo version. Override with REVISION=2 …
+REVISION="${REVISION:-1}"
+DEBVER="${VERSION}-${REVISION}"
 ARCH="$(dpkg --print-architecture)"
-PKG="grun_${VERSION}_${ARCH}"
+PKG="grun_${DEBVER}_${ARCH}"
 STAGE="$ROOT/build/$PKG"
 
-echo "Building grun $VERSION ($ARCH)…"
+echo "Building grun $DEBVER ($ARCH)…"
 cargo build --release
 
 # Lay out the package tree.
@@ -33,7 +37,7 @@ INSTALLED_KB="$(du -sk "$STAGE/usr" | cut -f1)"
 
 cat > "$STAGE/DEBIAN/control" <<EOF
 Package: grun
-Version: $VERSION
+Version: $DEBVER
 Section: utils
 Priority: optional
 Architecture: $ARCH

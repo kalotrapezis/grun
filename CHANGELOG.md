@@ -28,6 +28,12 @@ All notable changes to grun are documented here. This project adheres to
 - **Square window corners** — the launcher window no longer has rounded corners,
   which left transparent gaps that showed the desktop through and looked broken.
 
+### Fixed
+
+- **Settings window transparency** (packaging revision `0.0.3-1`) — the launcher's
+  transparent surface (for the drop shadow) was leaking onto the settings window,
+  rendering it see-through. The transparency is now scoped to the launcher only.
+
 ## [0.0.2] — 2026-06-23
 
 ### Added
