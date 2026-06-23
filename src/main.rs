@@ -28,6 +28,9 @@ use std::collections::HashMap;
 const APP_ID: &str = "org.grun.Launcher";
 const WIN_W: i32 = 860;
 const WIN_H: i32 = 720;
+/// Transparent margin around the panel, inside the window, that the drop shadow
+/// spills into. Must comfortably exceed the CSS shadow's blur + offset.
+const SHADOW_MARGIN: i32 = 24;
 /// Tallest the scrollable result area grows before it starts scrolling. Leaves
 /// room for the search bar so the whole window peaks near WIN_H.
 const CONTENT_MAX_H: i32 = WIN_H - 80;
@@ -86,10 +89,21 @@ const EMB_APPICON_512: &[u8] =
 // used for subtle borders and muted text that composite over those solid colours.
 const CSS: &str = r#"
 window {
-    background-color: @theme_bg_color;
+    /* The window surface is transparent so the shell below can cast a drop
+       shadow out into the margin — that shadow is what separates grun from the
+       windows behind it. Needs a compositor (Cinnamon runs one by default). */
+    background-color: transparent;
     color: @theme_fg_color;
+}
+/* The visible panel: solid background, thin border, and a soft drop shadow.
+   Square corners — a rounded undecorated window left transparent corner gaps
+   that read as broken. The surrounding margin (set in code) is the room the
+   shadow needs to spill into. */
+.grun-shell {
+    background-color: @theme_bg_color;
     border: 1px solid alpha(@theme_fg_color, 0.18);
-    border-radius: 12px;
+    border-radius: 0;
+    box-shadow: 0 6px 20px 1px alpha(#000000, 0.5);
 }
 .grun-entry {
     font-size: 20px;
@@ -213,6 +227,17 @@ window {
     border-radius: 8px;
 }
 .grun-save:hover { background-color: alpha(@theme_selected_bg_color, 0.85); }
+
+/* Big mode: in the full-screen layout the active-search list has lots of room,
+   so scale the search box and result rows up to be easier on the eye. */
+.grun-entry.big { font-size: 26px; padding: 22px 24px; }
+.grun-row.big { padding: 14px 18px; margin: 3px 12px; }
+.grun-row.big .grun-title { font-size: 20px; }
+.grun-row.big .grun-sub { font-size: 15px; }
+.grun-letter.big { font-size: 16px; padding: 3px 11px; min-width: 18px; }
+.grun-chip.big { font-size: 14px; padding: 5px 12px; }
+.grun-tag.big { font-size: 13px; padding: 3px 10px; }
+.grun-section.big { font-size: 14px; }
 "#;
 
 fn main() -> glib::ExitCode {
@@ -350,6 +375,13 @@ fn build_app(app: &Application) -> Rc<dyn Fn()> {
         .build();
 
     let vbox = GtkBox::new(Orientation::Vertical, 0);
+    // The shell carries the panel background + drop shadow; the margin around it
+    // (inside the transparent window) is the room the shadow spills into.
+    vbox.add_css_class("grun-shell");
+    vbox.set_margin_top(SHADOW_MARGIN);
+    vbox.set_margin_bottom(SHADOW_MARGIN);
+    vbox.set_margin_start(SHADOW_MARGIN);
+    vbox.set_margin_end(SHADOW_MARGIN);
     vbox.append(&top);
     vbox.append(&scroller);
 
@@ -631,7 +663,8 @@ fn build_app(app: &Application) -> Rc<dyn Fn()> {
                         results_box.append(&section);
                         cur_section = Some(section);
                     } else {
-                        results_box.append(&section_header(m.category));
+                        // Active search: full-screen ("big") mode scales rows up.
+                        results_box.append(&section_header_sized(m.category, fullscreen));
                     }
                     prev_cat = m.category;
                     cur_row = None;
@@ -673,7 +706,7 @@ fn build_app(app: &Application) -> Rc<dyn Fn()> {
                     }
                     rows.borrow_mut().push(card.upcast::<gtk4::Widget>());
                 } else {
-                    let (row, chips) = build_grouped_row(letter, m);
+                    let (row, chips) = build_grouped_row(letter, m, fullscreen);
                     for (n, chip) in chips.into_iter().enumerate() {
                         let run_secondary = run_secondary.clone();
                         chip.connect_clicked(move |_| run_secondary(i, n));
@@ -747,6 +780,10 @@ fn build_app(app: &Application) -> Rc<dyn Fn()> {
                 w.present();
                 return;
             }
+            // Optionally gate settings behind a polkit/sudo password prompt.
+            if cfg.borrow().lock_settings && !authenticate() {
+                return;
+            }
             let w = open_settings(
                 &window,
                 cfg.clone(),
@@ -774,6 +811,7 @@ fn build_app(app: &Application) -> Rc<dyn Fn()> {
         let scroller = scroller.clone();
         let refresh = refresh.clone();
         let full_btn = full_btn.clone();
+        let entry = entry.clone();
         move |_| {
             let now = !cfg.borrow().fullscreen;
             cfg.borrow_mut().fullscreen = now;
@@ -783,7 +821,7 @@ fn build_app(app: &Application) -> Rc<dyn Fn()> {
             } else {
                 "view-fullscreen-symbolic"
             });
-            apply_window_mode(&window, &scroller, now);
+            apply_window_mode(&window, &scroller, &entry, now);
             refresh();
             // Re-anchor the now differently-sized window. Two ticks: the first
             // lets the content resize, the second positions the final size.
@@ -890,7 +928,7 @@ fn build_app(app: &Application) -> Rc<dyn Fn()> {
         set_search_glow(true);
         entry.set_text("");
         let fullscreen = cfg_for_toggle.borrow().fullscreen;
-        apply_window_mode(&window, &scroller_for_toggle, fullscreen);
+        apply_window_mode(&window, &scroller_for_toggle, &entry, fullscreen);
         refresh();
         window.present();
         entry.grab_focus();
@@ -907,7 +945,18 @@ fn build_app(app: &Application) -> Rc<dyn Fn()> {
 /// fullscreen state: full screen instead pins a fixed large minimum size so the
 /// window stays big even while searching (a short result list won't shrink it);
 /// normal mode clears that and content-fits up to a cap.
-fn apply_window_mode(window: &ApplicationWindow, scroller: &ScrolledWindow, fullscreen: bool) {
+fn apply_window_mode(
+    window: &ApplicationWindow,
+    scroller: &ScrolledWindow,
+    entry: &Entry,
+    fullscreen: bool,
+) {
+    // Big search box in the full-screen layout (feature: easier on the eye).
+    if fullscreen {
+        entry.add_css_class("big");
+    } else {
+        entry.remove_css_class("big");
+    }
     if fullscreen {
         let (_, _, mw, mh) = monitor_geometry();
         let fs_w = fullscreen_width().min(mw);
@@ -925,8 +974,9 @@ fn apply_window_mode(window: &ApplicationWindow, scroller: &ScrolledWindow, full
 }
 
 /// Estimated width of the full-screen start menu (rows of HOME_ROW_FULL cards).
+/// Includes the shadow margin on both sides so the panel keeps its card width.
 fn fullscreen_width() -> i32 {
-    HOME_ROW_FULL as i32 * (CARD_W + 8) + 32
+    HOME_ROW_FULL as i32 * (CARD_W + 8) + 32 + 2 * SHADOW_MARGIN
 }
 
 /// Move the currently-active window to position using the window manager
@@ -1150,6 +1200,20 @@ fn set_autostart(on: bool) {
         let _ = std::fs::write(&path, body);
     } else {
         let _ = std::fs::remove_file(&path);
+    }
+}
+
+/// Ask for a password before opening settings (the "password-protect settings"
+/// option). Uses polkit's `pkexec`, which pops the system's graphical password
+/// dialog and validates the user's credentials; we run a harmless `true` just to
+/// require a successful authentication. Returns true only if the user
+/// authenticated. Falls back to allowing access if pkexec isn't present, so the
+/// user can never be permanently locked out of their own settings.
+fn authenticate() -> bool {
+    match std::process::Command::new("pkexec").arg("true").status() {
+        Ok(status) => status.success(),
+        // pkexec missing / not executable → don't lock the user out.
+        Err(_) => true,
     }
 }
 
@@ -1432,6 +1496,20 @@ fn open_settings(
         })
     });
 
+    // Require a password (polkit/sudo) before settings opens.
+    add_switch_row(
+        &outer,
+        "Password-protect settings",
+        cfg.borrow().lock_settings,
+        {
+            let cfg = cfg.clone();
+            Rc::new(move |state| {
+                cfg.borrow_mut().lock_settings = state;
+                cfg.borrow().save();
+            })
+        },
+    );
+
     // --- Actions per category (reorder / enable) ---
     let act_title = Label::new(Some("Actions per category"));
     act_title.add_css_class("grun-settings-title");
@@ -1443,6 +1521,8 @@ fn open_settings(
     }
 
     add_home_hidden(&outer, history.clone(), refresh.clone());
+    add_hidden_apps(&outer, history.clone(), refresh.clone());
+    add_hidden_power(&outer, history.clone(), refresh.clone());
     add_hidden_files(&outer, history.clone(), refresh.clone());
 
     let save_btn = Button::with_label("Save & Close");
@@ -1640,6 +1720,119 @@ fn add_hidden_files(outer: &GtkBox, history: Rc<RefCell<History>>, refresh: Rc<d
     rebuild();
 }
 
+/// Apps hidden from search (the privacy "Hide" action), each with Restore.
+fn add_hidden_apps(outer: &GtkBox, history: Rc<RefCell<History>>, refresh: Rc<dyn Fn()>) {
+    let header = Label::new(Some("Hidden apps"));
+    header.add_css_class("grun-settings-title");
+    header.set_halign(Align::Start);
+    header.set_margin_top(12);
+    outer.append(&header);
+
+    let list = GtkBox::new(Orientation::Vertical, 4);
+    outer.append(&list);
+
+    let slot: Rc<RefCell<Option<Rc<dyn Fn()>>>> = Rc::new(RefCell::new(None));
+    let rebuild: Rc<dyn Fn()> = {
+        let slot = slot.clone();
+        let list = list.clone();
+        let history = history.clone();
+        let refresh = refresh.clone();
+        Rc::new(move || {
+            while let Some(c) = list.first_child() {
+                list.remove(&c);
+            }
+            let apps = history.borrow().hidden_apps();
+            if apps.is_empty() {
+                let none = Label::new(Some("None"));
+                none.add_css_class("grun-sub");
+                none.set_halign(Align::Start);
+                list.append(&none);
+                return;
+            }
+            for id in apps {
+                let name = gtk4::gio::DesktopAppInfo::new(&id)
+                    .map(|a| a.display_name().to_string())
+                    .unwrap_or_else(|| id.trim_end_matches(".desktop").to_string());
+                let row = home_hidden_row(&name, &id);
+                let restore = Button::with_label("Restore");
+                restore.connect_clicked({
+                    let slot = slot.clone();
+                    let history = history.clone();
+                    let refresh = refresh.clone();
+                    let id = id.clone();
+                    move |_| {
+                        history.borrow_mut().unhide_app(&id);
+                        history.borrow().save();
+                        refresh();
+                        if let Some(rb) = slot.borrow().clone() {
+                            rb();
+                        }
+                    }
+                });
+                row.append(&restore);
+                list.append(&row);
+            }
+        })
+    };
+    *slot.borrow_mut() = Some(rebuild.clone());
+    rebuild();
+}
+
+/// System/power actions hidden from search, each with Restore.
+fn add_hidden_power(outer: &GtkBox, history: Rc<RefCell<History>>, refresh: Rc<dyn Fn()>) {
+    let header = Label::new(Some("Hidden system actions"));
+    header.add_css_class("grun-settings-title");
+    header.set_halign(Align::Start);
+    header.set_margin_top(12);
+    outer.append(&header);
+
+    let list = GtkBox::new(Orientation::Vertical, 4);
+    outer.append(&list);
+
+    let slot: Rc<RefCell<Option<Rc<dyn Fn()>>>> = Rc::new(RefCell::new(None));
+    let rebuild: Rc<dyn Fn()> = {
+        let slot = slot.clone();
+        let list = list.clone();
+        let history = history.clone();
+        let refresh = refresh.clone();
+        Rc::new(move || {
+            while let Some(c) = list.first_child() {
+                list.remove(&c);
+            }
+            let cmds = history.borrow().hidden_power();
+            if cmds.is_empty() {
+                let none = Label::new(Some("None"));
+                none.add_css_class("grun-sub");
+                none.set_halign(Align::Start);
+                list.append(&none);
+                return;
+            }
+            for cmd in cmds {
+                let row = home_hidden_row(&providers::power_label(&cmd), &cmd);
+                let restore = Button::with_label("Restore");
+                restore.connect_clicked({
+                    let slot = slot.clone();
+                    let history = history.clone();
+                    let refresh = refresh.clone();
+                    let cmd = cmd.clone();
+                    move |_| {
+                        history.borrow_mut().unhide_power(&cmd);
+                        history.borrow().save();
+                        refresh();
+                        if let Some(rb) = slot.borrow().clone() {
+                            rb();
+                        }
+                    }
+                });
+                row.append(&restore);
+                list.append(&row);
+            }
+        })
+    };
+    *slot.borrow_mut() = Some(rebuild.clone());
+    rebuild();
+}
+
 /// A reorderable, toggleable list of a category's secondary actions.
 fn add_reorderable_actions(
     outer: &GtkBox,
@@ -1767,6 +1960,16 @@ fn perform(action: &Action, history: &Rc<RefCell<History>>) -> bool {
             history.borrow().save();
             false
         }
+        Action::HideApp(id) => {
+            history.borrow_mut().hide_app(id);
+            history.borrow().save();
+            false
+        }
+        Action::HidePower(cmd) => {
+            history.borrow_mut().hide_power(cmd);
+            history.borrow().save();
+            false
+        }
         Action::HideHomeApp(id) => {
             history.borrow_mut().hide_home_app(id);
             history.borrow().save();
@@ -1890,16 +2093,25 @@ fn add_choice_row(
 
 /// Section header: category SVG icon (from Assets) + label.
 fn section_header(category: &str) -> GtkBox {
+    section_header_sized(category, false)
+}
+
+/// Section header, optionally in "big" mode (full-screen active search), where
+/// the icon and label are scaled up to match the larger rows.
+fn section_header_sized(category: &str, big: bool) -> GtkBox {
     let h = GtkBox::new(Orientation::Horizontal, 8);
     h.set_halign(Align::Start);
-    h.set_margin_start(8);
-    h.set_margin_top(10);
+    h.set_margin_start(if big { 12 } else { 8 });
+    h.set_margin_top(if big { 14 } else { 10 });
     if let Some(img) = section_icon(category) {
-        img.set_pixel_size(18);
+        img.set_pixel_size(if big { 24 } else { 18 });
         h.append(&img);
     }
     let lbl = Label::new(Some(category));
     lbl.add_css_class("grun-section");
+    if big {
+        lbl.add_css_class("big");
+    }
     h.append(&lbl);
     h
 }
@@ -2176,12 +2388,15 @@ fn clipboard_image_path(text: &str) -> Option<String> {
 
 /// Build one grouped result row: [letter] [icon] title/subtitle [action chips].
 /// Returns the row widget and its chip buttons (for wiring secondary actions).
-fn build_grouped_row(letter: char, m: &Match) -> (GtkBox, Vec<Button>) {
+fn build_grouped_row(letter: char, m: &Match, big: bool) -> (GtkBox, Vec<Button>) {
     let badge = Label::new(Some(&letter.to_string()));
     badge.add_css_class("grun-letter");
+    if big {
+        badge.add_css_class("big");
+    }
     badge.set_valign(Align::Center);
 
-    let icon = icon_image(m.icon.as_deref(), 32);
+    let icon = icon_image(m.icon.as_deref(), if big { 48 } else { 32 });
 
     let text = GtkBox::new(Orientation::Vertical, 0);
     text.set_valign(Align::Center);
@@ -2199,6 +2414,9 @@ fn build_grouped_row(letter: char, m: &Match) -> (GtkBox, Vec<Button>) {
         let badge = Label::new(Some(tag));
         badge.add_css_class("grun-tag");
         badge.add_css_class(tag_class(tag));
+        if big {
+            badge.add_css_class("big");
+        }
         badge.set_valign(Align::Center);
         title_row.append(&badge);
     }
@@ -2214,6 +2432,9 @@ fn build_grouped_row(letter: char, m: &Match) -> (GtkBox, Vec<Button>) {
 
     let row = GtkBox::new(Orientation::Horizontal, 10);
     row.add_css_class("grun-row");
+    if big {
+        row.add_css_class("big");
+    }
     row.append(&badge);
     row.append(&icon);
     row.append(&text);
@@ -2223,6 +2444,9 @@ fn build_grouped_row(letter: char, m: &Match) -> (GtkBox, Vec<Button>) {
     for (n, (_id, label, _)) in m.actions.iter().enumerate() {
         let chip = Button::with_label(&format!("{} {}", n + 1, label));
         chip.add_css_class("grun-chip");
+        if big {
+            chip.add_css_class("big");
+        }
         chip.set_valign(Align::Center);
         row.append(&chip);
         chips.push(chip);

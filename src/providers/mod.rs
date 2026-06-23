@@ -22,7 +22,7 @@ pub use apps::AppsProvider;
 pub use calc::CalcProvider;
 pub use command::CommandProvider;
 pub use files::FilesProvider;
-pub use power::PowerProvider;
+pub use power::{label_for_cmd as power_label, PowerProvider};
 pub use search::SearchProvider;
 
 // Row builders reused by the empty-state dashboard.
@@ -38,6 +38,14 @@ const TOTAL: usize = 12;
 pub trait Provider {
     /// Return matches for `input`. `input` is already trimmed and non-empty.
     fn query(&self, input: &str) -> Vec<Match>;
+
+    /// Whether this provider should still run once the query has more than one
+    /// word. App search is the heavy single-token case, so it opts out: after the
+    /// first word the user is searching files / the web / AI, and skipping the
+    /// per-keystroke scan of every installed app keeps multi-word queries snappy.
+    fn wants_multiword(&self) -> bool {
+        true
+    }
 }
 
 fn make(id: &str, cfg: &Config, history: &Rc<RefCell<History>>) -> Option<Box<dyn Provider>> {
@@ -47,7 +55,7 @@ fn make(id: &str, cfg: &Config, history: &Rc<RefCell<History>>) -> Option<Box<dy
         "files" => Box::new(FilesProvider::new()),
         "search" => Box::new(SearchProvider),
         "ai" => Box::new(AiProvider),
-        "power" => Box::new(PowerProvider),
+        "power" => Box::new(PowerProvider::new(history.clone())),
         "command" => Box::new(CommandProvider),
         _ => return None,
     })
@@ -90,9 +98,16 @@ impl Registry {
         if input.is_empty() {
             return Vec::new();
         }
+        // Past the first word, skip providers that opt out (app search) so a long
+        // query doesn't pay to scan every installed app; files, web search, AI,
+        // power, calc and command keep running.
+        let multiword = input.split_whitespace().count() > 1;
         // (priority index, match)
         let mut tagged: Vec<(usize, Match)> = Vec::new();
         for (idx, provider) in self.providers.iter().enumerate() {
+            if multiword && !provider.wants_multiword() {
+                continue;
+            }
             let mut ms = provider.query(input);
             ms.sort_by(|a, b| {
                 b.score

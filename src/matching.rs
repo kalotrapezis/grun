@@ -80,6 +80,10 @@ pub enum Action {
     RemoveClip(String),
     /// Hide a file from results — restorable later (handled by the UI).
     HideFile(std::path::PathBuf),
+    /// Hide an app from search entirely (privacy) — restorable (UI-handled).
+    HideApp(String),
+    /// Hide a system/power action from search — restorable (UI-handled).
+    HidePower(String),
     /// Remove an app from the home dashboard only — still searchable (UI-handled).
     HideHomeApp(String),
     /// Remove a file from the home dashboard only — still searchable (UI-handled).
@@ -151,6 +155,8 @@ impl Action {
             Action::PinClip(_)
             | Action::RemoveClip(_)
             | Action::HideFile(_)
+            | Action::HideApp(_)
+            | Action::HidePower(_)
             | Action::HideHomeApp(_)
             | Action::HideHomeFile(_) => {}
             Action::TerminalRun(cmd) => spawn_in_terminal(cmd),

@@ -117,6 +117,36 @@ pub fn relevance(query: &str, candidate: &str) -> Option<f32> {
     }
 }
 
+/// Pre-normalize a query into its layout variants once, so a provider scanning a
+/// large index (e.g. 60k files) doesn't recompute the variants + normalization
+/// for every single candidate. Pair with [`relevance_pre`].
+pub fn query_variants(query: &str) -> Vec<String> {
+    variants(query)
+        .iter()
+        .map(|v| normalize(v))
+        .filter(|q| !q.is_empty())
+        .collect()
+}
+
+/// Like [`relevance`] but against pre-normalized query variants from
+/// [`query_variants`], avoiding per-candidate query normalization.
+pub fn relevance_pre(qs: &[String], candidate: &str) -> Option<f32> {
+    let cand = normalize(candidate);
+    let mut best = 0.0f32;
+    for q in qs {
+        if let Some(s) = score_one(q, &cand) {
+            if s > best {
+                best = s;
+            }
+        }
+    }
+    if best >= 0.30 {
+        Some(best)
+    } else {
+        None
+    }
+}
+
 fn score_one(q: &str, cand: &str) -> Option<f32> {
     if cand.starts_with(q) {
         return Some(1.0);

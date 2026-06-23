@@ -3,6 +3,31 @@
 All notable changes to grun are documented here. This project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## [0.0.3] — 2026-06-23
+
+### Added
+
+- **Hide apps from search** — each app result now has a **Hide** action that
+  removes it from search entirely (a privacy feature). Restore hidden apps under
+  Settings → "Hidden apps".
+- **Hide system actions** — power/system actions (shutdown, sleep, …) get the
+  same per-result **Hide** action, restorable under Settings → "Hidden system
+  actions". Hide the ones you never use (e.g. Sleep).
+- **Password-protect settings** — an option to require a polkit/sudo password
+  prompt before the settings window opens. (Settings → Options.)
+
+### Changed
+
+- **Bigger full-screen search** — in the full-screen layout an active search now
+  uses a larger search box and roomier result rows, so the extra space is easier
+  on the eye.
+- **Faster multi-word queries** — past the first word grun stops scanning every
+  installed app (app search is single-word by nature), so longer queries stay
+  snappy. File search also normalizes the query once up front instead of once
+  per candidate.
+- **Square window corners** — the launcher window no longer has rounded corners,
+  which left transparent gaps that showed the desktop through and looked broken.
+
 ## [0.0.2] — 2026-06-23
 
 ### Added
