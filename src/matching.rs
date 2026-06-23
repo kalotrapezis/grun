@@ -70,8 +70,6 @@ pub enum Action {
     OpenPath(std::path::PathBuf),
     /// Run text as a shell command.
     Shell(String),
-    /// Hand text to Claude (copies it and opens claude.ai for now).
-    Claude(String),
     /// Put a saved image back on the clipboard (via xclip).
     CopyImage(String),
     /// Open the folder containing a file.
@@ -82,10 +80,12 @@ pub enum Action {
     RemoveClip(String),
     /// Hide a file from results — restorable later (handled by the UI).
     HideFile(std::path::PathBuf),
+    /// Remove an app from the home dashboard only — still searchable (UI-handled).
+    HideHomeApp(String),
+    /// Remove a file from the home dashboard only — still searchable (UI-handled).
+    HideHomeFile(std::path::PathBuf),
     /// Run a shell command inside a terminal (so the user sees output/confirms).
     TerminalRun(String),
-    /// Copy text to the clipboard and launch an app (Claude Desktop "paste it in").
-    ClipAndOpenApp { text: String, app: gio::AppInfo },
     /// Open the software manager — at the app's page where the manager supports
     /// it (gnome-software / Discover); otherwise just open the manager.
     OpenStore(String),
@@ -123,13 +123,6 @@ impl Action {
                     eprintln!("grun: failed to run command: {e}");
                 }
             }
-            Action::Claude(text) => {
-                if let Some(display) = gtk4::gdk::Display::default() {
-                    display.clipboard().set_text(text);
-                }
-                let _ =
-                    gio::AppInfo::launch_default_for_uri("https://claude.ai/new", gio::AppLaunchContext::NONE);
-            }
             Action::CopyImage(path) => {
                 // xclip reads the file and serves it as image/png to pasters.
                 if let Ok(data) = std::fs::read(path) {
@@ -155,14 +148,12 @@ impl Action {
                 }
             }
             // These mutate history and are handled by the UI layer.
-            Action::PinClip(_) | Action::RemoveClip(_) | Action::HideFile(_) => {}
+            Action::PinClip(_)
+            | Action::RemoveClip(_)
+            | Action::HideFile(_)
+            | Action::HideHomeApp(_)
+            | Action::HideHomeFile(_) => {}
             Action::TerminalRun(cmd) => spawn_in_terminal(cmd),
-            Action::ClipAndOpenApp { text, app } => {
-                if let Some(display) = gtk4::gdk::Display::default() {
-                    display.clipboard().set_text(text);
-                }
-                let _ = app.launch(&[], gio::AppLaunchContext::NONE);
-            }
             Action::OpenStore(id) => {
                 use std::process::Command;
                 // Prefer managers that can deep-link to the app's page.

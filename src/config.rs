@@ -12,12 +12,18 @@ const KNOWN: &[(&str, bool)] = &[
     ("calc", true),
     ("apps", true),
     ("files", true),
-    ("google", true),
-    ("claude", false),
+    ("search", true),
+    ("ai", true),
+    ("power", true),
     ("command", false),
 ];
 
 /// Known secondary actions per category, in default order: (id, label).
+///
+/// For the "Search" and "AI" categories the list is *primary-selectable*: the
+/// first enabled action becomes the default (Enter) action and the rest show as
+/// numbered side actions. So reordering this list in settings changes which
+/// engine/assistant runs by default (e.g. put DuckDuckGo above Google).
 pub const KNOWN_ACTIONS: &[(&str, &[(&str, &str)])] = &[
     ("Apps", &[("show_details", "Show details"), ("uninstall", "Uninstall")]),
     (
@@ -30,10 +36,29 @@ pub const KNOWN_ACTIONS: &[(&str, &[(&str, &str)])] = &[
     ),
     (
         "Search",
-        &[("duckduckgo", "DuckDuckGo"), ("claude_desktop", "Claude Desktop")],
+        &[
+            ("google", "Google"),
+            ("duckduckgo", "DuckDuckGo"),
+            ("swisscows", "Swisscows"),
+        ],
+    ),
+    (
+        "AI",
+        &[
+            ("claude", "Claude"),
+            ("chatgpt", "ChatGPT"),
+            ("deepseek", "DeepSeek"),
+            ("mistral", "Mistral"),
+        ],
     ),
     ("Clipboard", &[("pin", "Pin"), ("remove", "Remove")]),
 ];
+
+/// Categories whose action list selects the default (Enter) action from its
+/// first enabled entry, rather than having a fixed primary action.
+pub fn primary_selectable(category: &str) -> bool {
+    matches!(category, "Search" | "AI")
+}
 
 /// Human-readable label for an action id.
 pub fn action_label(id: &str) -> &'static str {
@@ -81,8 +106,9 @@ pub fn label(id: &str) -> &'static str {
         "calc" => "Calculator",
         "apps" => "Apps",
         "files" => "Files",
-        "google" => "Google search",
-        "claude" => "Claude command",
+        "search" => "Web search",
+        "ai" => "AI chat",
+        "power" => "System power",
         "command" => "Command execution",
         _ => "Unknown",
     }
@@ -109,6 +135,8 @@ pub struct Config {
     pub focus_delay_ms: u32,
     /// Match apps on their description/keywords too, not just the name.
     pub search_descriptions: bool,
+    /// Full-screen "start menu" home layout (home screen only; search unchanged).
+    pub fullscreen: bool,
     /// Per-category secondary-action order + enabled state.
     pub action_prefs: Vec<CatActions>,
 }
@@ -129,6 +157,7 @@ impl Default for Config {
             home_files_mode: "recent".to_string(),
             focus_delay_ms: 0,
             search_descriptions: false,
+            fullscreen: false,
             action_prefs: default_action_prefs(),
         }
     }
@@ -192,6 +221,10 @@ impl Config {
                         cfg.search_descriptions = matches!(val, "on" | "true" | "1" | "yes");
                         continue;
                     }
+                    "fullscreen" => {
+                        cfg.fullscreen = matches!(val, "on" | "true" | "1" | "yes");
+                        continue;
+                    }
                     _ => {}
                 }
                 // actions.<category>=id:on,id:off,…
@@ -206,12 +239,18 @@ impl Config {
                         .collect::<Vec<_>>();
                     if !items.is_empty() {
                         if let Some(c) = cfg.action_prefs.iter_mut().find(|c| c.category == cat) {
-                            // Merge: keep saved order/state, append any new known ids.
-                            let mut merged = items;
-                            for known in known_action_ids(cat) {
-                                if !merged.iter().any(|p| p.id == known) {
+                            // Merge: keep saved order/state for ids we still know,
+                            // drop any that are gone (e.g. an old "claude_desktop"),
+                            // then append any new known ids.
+                            let known = known_action_ids(cat);
+                            let mut merged: Vec<ActionPref> = items
+                                .into_iter()
+                                .filter(|p| known.iter().any(|&k| k == p.id.as_str()))
+                                .collect();
+                            for &k in &known {
+                                if !merged.iter().any(|p| p.id.as_str() == k) {
                                     merged.push(ActionPref {
-                                        id: known.to_string(),
+                                        id: k.to_string(),
                                         enabled: true,
                                     });
                                 }
@@ -265,6 +304,10 @@ impl Config {
         body.push_str(&format!(
             "search_descriptions={}\n",
             if self.search_descriptions { "on" } else { "off" }
+        ));
+        body.push_str(&format!(
+            "fullscreen={}\n",
+            if self.fullscreen { "on" } else { "off" }
         ));
         for c in &self.action_prefs {
             let items = c

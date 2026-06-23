@@ -26,8 +26,8 @@ dependencies), so while it's tuned for Cinnamon/Mint it runs on any GTK desktop.
 
 ## Features
 
-- 🚀 **App launcher** — fuzzy search over your installed apps, with package-type
-  tags (Flatpak / Snap / AppImage / System) and per-app actions.
+- 🚀 **App launcher** — fuzzy search over your installed apps, with colour-coded
+  package-type tags (System / Flatpak / AppImage / Snap) and per-app actions.
 - 🌐 **Layout-independent search** — type in *any* keyboard layout. The keys are
   matched across layouts, so `βοττλεσ` finds *Bottles* and `μαστερ.πδφ` finds
   *master.pdf*. It looks at the letters, not the language.
@@ -37,10 +37,20 @@ dependencies), so while it's tuned for Cinnamon/Mint it runs on any GTK desktop.
 - 📁 **File search** — fuzzy filename search across your home folder, real
   MIME-type icons, image thumbnails, and `*.pdf`-style wildcards.
 - 🧮 **Calculator** — type `12 * (3 + 4)`, press Enter to copy the result.
-- 🔎 **Web & more** — Google/DuckDuckGo search, run a shell command, hand a query
-  to Claude — every function is reorderable and can be toggled off.
-- 🏠 **Dashboard** — an empty search box shows your recent clipboard, most-used
-  apps, and recent files as a 3×3 grid.
+- 🔎 **Web search** — Google, DuckDuckGo or Swisscows. Reorder them to pick your
+  default engine.
+- 🤖 **AI chat** — open Claude, ChatGPT, DeepSeek or Mistral with your query
+  pre-filled. Reorder to choose your default assistant.
+- ⏻ **System power** — type *shutdown*, *restart*, *sleep*, *hibernate*, *lock*
+  or *log out* to run it (systemd).
+- 🎨 **Follows your theme** — colours come from the active GTK theme, so grun
+  matches the system light/dark mode and your Mint-Y accent automatically.
+- 🏠 **Dashboard** — an empty search box shows recent clipboard, most-used apps
+  and recent files. Each section **expands** for more, and a full-screen
+  **start-menu** mode fills the screen with a clipboard row, an app grid and a
+  files row.
+- 🙈 **Hide from home** — drop any app or file from the dashboard while keeping
+  it searchable; restore it from settings.
 - ⌨️ **Fully keyboard driven** — see [Keyboard](#keyboard) below.
 - ⚙️ **Configurable** — reorder/disable every function and every per-result
   action, choose the pop-up position, auto-focus delay, and more.
@@ -57,17 +67,27 @@ on its description) alongside matching files:
 
 ![Description and file search](Screenshots/app-description-search-and-file-search.png)
 
-**Web search and more** — any query can go to Google / DuckDuckGo, or be handed
-to Claude:
+**Web search and more** — any query can go to Google / DuckDuckGo / Swisscows,
+or to an AI assistant (Claude / ChatGPT / DeepSeek / Mistral):
 
 ![Web search](Screenshots/search.png)
+
+**Expand a section** — each home section opens up to show more of your
+clipboard, apps or files:
+
+![Expand for more content](Screenshots/Expand-to-More-content.png)
+
+**System power** — type to shut down, restart, sleep, hibernate, lock or log
+out:
+
+![System power](Screenshots/Poweroff-system.png)
 
 ## Install
 
 ### From the `.deb` (Debian / Ubuntu / Linux Mint)
 
 ```bash
-sudo apt install ./grun_0.0.1_amd64.deb
+sudo apt install ./grun_0.0.2_amd64.deb
 ```
 
 This installs the binary, a desktop entry, and the app icon. Dependencies
@@ -118,16 +138,18 @@ Applications** (or enable *Start on login* in settings) so it's ready after boot
 
 Open settings with the ⚙ gear. You can:
 
-- Enable/disable and **reorder** every function (Apps, Files, Calculator, Web,
-  Claude, Run command) — order = priority.
-- Reorder/disable the **per-result actions** for each category.
+- Enable/disable and **reorder** every function (Apps, Files, Calculator, Web
+  search, AI chat, System power, Run command) — order = priority.
+- Reorder/disable the **per-result actions** for each category. For Web search
+  and AI chat the top entry is the **default** (Enter) action — reorder to make
+  DuckDuckGo, or ChatGPT, your default.
 - Choose the **pop-up position** (top / center / bottom).
 - Pick what the **home dashboard** shows (clipboard on/off, apps & files by
   *most used* or *recent*).
 - Set an **auto-focus delay** so the result list takes focus after you stop
   typing.
 - Toggle **search app descriptions** (so "screenshot" finds Flameshot).
-- Manage **hidden files** and restore them.
+- Restore items you've **hidden from home**, and manage **hidden files**.
 
 Config lives at `~/.config/grun/config`; clipboard/usage history at
 `~/.local/share/grun/`. Everything stays on your machine.

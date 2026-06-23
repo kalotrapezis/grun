@@ -45,6 +45,12 @@ pub struct History {
     pub file_uses: Vec<AppStat>,
     #[serde(default)]
     pub hidden_files: Vec<String>,
+    /// App ids the user removed from the home dashboard (still searchable).
+    #[serde(default)]
+    pub home_hidden_apps: Vec<String>,
+    /// File paths the user removed from the home dashboard (still searchable).
+    #[serde(default)]
+    pub home_hidden_files: Vec<String>,
 }
 
 fn now() -> u64 {
@@ -194,6 +200,44 @@ impl History {
 
     pub fn hidden_files(&self) -> Vec<String> {
         self.hidden_files.clone()
+    }
+
+    // ---------- hidden from home dashboard (searchable still) ----------
+
+    pub fn hide_home_app(&mut self, id: &str) {
+        if !self.home_hidden_apps.iter().any(|p| p == id) {
+            self.home_hidden_apps.push(id.to_string());
+        }
+    }
+
+    pub fn unhide_home_app(&mut self, id: &str) {
+        self.home_hidden_apps.retain(|p| p != id);
+    }
+
+    pub fn is_home_app_hidden(&self, id: &str) -> bool {
+        self.home_hidden_apps.iter().any(|p| p == id)
+    }
+
+    pub fn home_hidden_apps(&self) -> Vec<String> {
+        self.home_hidden_apps.clone()
+    }
+
+    pub fn hide_home_file(&mut self, path: &str) {
+        if !self.home_hidden_files.iter().any(|p| p == path) {
+            self.home_hidden_files.push(path.to_string());
+        }
+    }
+
+    pub fn unhide_home_file(&mut self, path: &str) {
+        self.home_hidden_files.retain(|p| p != path);
+    }
+
+    pub fn is_home_file_hidden(&self, path: &str) -> bool {
+        self.home_hidden_files.iter().any(|p| p == path)
+    }
+
+    pub fn home_hidden_files(&self) -> Vec<String> {
+        self.home_hidden_files.clone()
     }
 
     // ---------- apps ----------
