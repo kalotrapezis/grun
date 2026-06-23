@@ -527,7 +527,7 @@ fn build_app(app: &Application) -> Rc<dyn Fn()> {
                 // How many app rows fit on screen between the clipboard and files
                 // rows (full screen only).
                 let app_rows_fit = || {
-                    let (_, _, _, mh) = monitor_geometry();
+                    let (_, _, _, mh) = monitor_geometry(c.follow_pointer);
                     let row_h = CARD_H + 12; // card + row spacing/margin
                     // search bar + clipboard (header + row) + files (header + row)
                     // + apps header + outer padding.
@@ -825,13 +825,14 @@ fn build_app(app: &Application) -> Rc<dyn Fn()> {
             } else {
                 "view-fullscreen-symbolic"
             });
-            apply_window_mode(&window, &scroller, &entry, now);
+            let follow = cfg.borrow().follow_pointer;
+            apply_window_mode(&window, &scroller, &entry, now, follow);
             refresh();
             // Re-anchor the now differently-sized window. Two ticks: the first
             // lets the content resize, the second positions the final size.
             let position = cfg.borrow().position.clone();
             glib::timeout_add_local_once(std::time::Duration::from_millis(90), move || {
-                move_active_window(&position, now);
+                move_active_window(&position, now, follow);
             });
         }
     });
@@ -932,15 +933,20 @@ fn build_app(app: &Application) -> Rc<dyn Fn()> {
         set_search_glow(true);
         entry.set_text("");
         let fullscreen = cfg_for_toggle.borrow().fullscreen;
-        apply_window_mode(&window, &scroller_for_toggle, &entry, fullscreen);
+        let follow = cfg_for_toggle.borrow().follow_pointer;
+        apply_window_mode(&window, &scroller_for_toggle, &entry, fullscreen, follow);
         refresh();
+        // Open invisible: the WM maps the window at its default (top-left) spot,
+        // and GTK4 can't position on X11, so we map it transparent, move it via
+        // xdotool, then reveal it already centred — no visible jump.
+        window.set_opacity(0.0);
         window.present();
         entry.grab_focus();
         let position = cfg_for_toggle.borrow().position.clone();
-        // Move once the window is mapped (GTK4 can't position on X11, so use the
-        // window manager via xdotool).
+        let window_for_move = window.clone();
         glib::timeout_add_local_once(std::time::Duration::from_millis(90), move || {
-            move_active_window(&position, fullscreen);
+            move_active_window(&position, fullscreen, follow);
+            window_for_move.set_opacity(1.0);
         });
     })
 }
@@ -954,6 +960,7 @@ fn apply_window_mode(
     scroller: &ScrolledWindow,
     entry: &Entry,
     fullscreen: bool,
+    follow_pointer: bool,
 ) {
     // Big search box in the full-screen layout (feature: easier on the eye).
     if fullscreen {
@@ -962,7 +969,7 @@ fn apply_window_mode(
         entry.remove_css_class("big");
     }
     if fullscreen {
-        let (_, _, mw, mh) = monitor_geometry();
+        let (_, _, mw, mh) = monitor_geometry(follow_pointer);
         let fs_w = fullscreen_width().min(mw);
         let fs_h = (mh - 80).max(400);
         window.set_size_request(fs_w, fs_h);
@@ -986,8 +993,8 @@ fn fullscreen_width() -> i32 {
 /// Move the currently-active window to position using the window manager
 /// (xdotool); GTK4 has no window-positioning API on X11. Full screen anchors the
 /// large content-sized window near the top, horizontally centred.
-fn move_active_window(position: &str, fullscreen: bool) {
-    let (mx, my, mw, mh) = monitor_geometry();
+fn move_active_window(position: &str, fullscreen: bool, follow_pointer: bool) {
+    let (mx, my, mw, mh) = monitor_geometry(follow_pointer);
     let (x, y) = if fullscreen {
         let ww = fullscreen_width().min(mw);
         (mx + (mw - ww) / 2, my + 40)
@@ -1001,6 +1008,9 @@ fn move_active_window(position: &str, fullscreen: bool) {
             };
         (mx + (mw - ww) / 2, y)
     };
+    // Wait for the move to finish (it's a fast call) so the caller can reveal the
+    // window only once it's in place — otherwise it flashes at the WM's default
+    // top-left spot before jumping to centre.
     let _ = std::process::Command::new("xdotool")
         .args([
             "getactivewindow",
@@ -1008,7 +1018,7 @@ fn move_active_window(position: &str, fullscreen: bool) {
             &x.to_string(),
             &y.to_string(),
         ])
-        .spawn();
+        .status();
 }
 
 
@@ -1238,15 +1248,65 @@ fn system_recent_files(n: usize) -> Vec<std::path::PathBuf> {
         .collect()
 }
 
-/// Geometry (x, y, width, height) of the primary monitor.
-fn monitor_geometry() -> (i32, i32, i32, i32) {
-    if let Some(display) = gdk::Display::default() {
-        if let Some(obj) = display.monitors().item(0) {
-            if let Ok(m) = obj.downcast::<gdk::Monitor>() {
-                let g = m.geometry();
-                return (g.x(), g.y(), g.width(), g.height());
+/// Current mouse pointer position in global coordinates, via xdotool (the same
+/// tool we use to move the window). Lets us open on whichever monitor the user
+/// is actually on, and re-evaluates every open so a monitor change is picked up.
+fn pointer_position() -> Option<(i32, i32)> {
+    let out = std::process::Command::new("xdotool")
+        .args(["getmouselocation", "--shell"])
+        .output()
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    let s = String::from_utf8_lossy(&out.stdout);
+    let (mut x, mut y) = (None, None);
+    for line in s.lines() {
+        if let Some(v) = line.strip_prefix("X=") {
+            x = v.trim().parse().ok();
+        } else if let Some(v) = line.strip_prefix("Y=") {
+            y = v.trim().parse().ok();
+        }
+    }
+    Some((x?, y?))
+}
+
+/// Geometry (x, y, width, height) of the monitor to open on. When
+/// `follow_pointer` is set, it's the monitor under the mouse pointer (so grun
+/// follows you across monitors and adapts when the layout changes); otherwise
+/// it's always the main (first) monitor. Falls back to the first monitor.
+fn monitor_geometry(follow_pointer: bool) -> (i32, i32, i32, i32) {
+    let Some(display) = gdk::Display::default() else {
+        return (0, 0, 1920, 1080);
+    };
+    let monitors = display.monitors();
+    // Prefer the monitor containing the pointer, if enabled.
+    if follow_pointer {
+        if let Some((px, py)) = pointer_position() {
+            for i in 0..monitors.n_items() {
+                if let Some(m) = monitors
+                    .item(i)
+                    .and_then(|o| o.downcast::<gdk::Monitor>().ok())
+                {
+                    let g = m.geometry();
+                    if px >= g.x()
+                        && px < g.x() + g.width()
+                        && py >= g.y()
+                        && py < g.y() + g.height()
+                    {
+                        return (g.x(), g.y(), g.width(), g.height());
+                    }
+                }
             }
         }
+    }
+    // Fallback: the main (first) monitor.
+    if let Some(m) = monitors
+        .item(0)
+        .and_then(|o| o.downcast::<gdk::Monitor>().ok())
+    {
+        let g = m.geometry();
+        return (g.x(), g.y(), g.width(), g.height());
     }
     (0, 0, 1920, 1080)
 }
@@ -1392,6 +1452,26 @@ fn open_settings(
             let cfg = cfg.clone();
             Rc::new(move |v: &str| {
                 cfg.borrow_mut().set_position(v);
+                cfg.borrow().save();
+            })
+        },
+    );
+
+    // Which monitor to open on: the one under the pointer, or always the main one.
+    let cur_mon = if cfg.borrow().follow_pointer {
+        "pointer"
+    } else {
+        "main"
+    };
+    add_choice_row(
+        &outer,
+        "Open on",
+        &[("Pointer's monitor", "pointer"), ("Main monitor", "main")],
+        cur_mon,
+        {
+            let cfg = cfg.clone();
+            Rc::new(move |v: &str| {
+                cfg.borrow_mut().follow_pointer = v == "pointer";
                 cfg.borrow().save();
             })
         },
