@@ -1,0 +1,22 @@
+[package]
+name = "grun"
+version = "0.0.1"
+edition = "2021"
+description = "A fast GTK4 application launcher inspired by KRunner, for Cinnamon / Linux Mint"
+license = "GPL-3.0-or-later"
+repository = "https://github.com/kalotrapezis/grun"
+readme = "README.md"
+
+[[bin]]
+name = "grun"
+path = "src/main.rs"
+
+[dependencies]
+gtk4 = { version = "0.9", features = ["v4_6"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[profile.release]
+opt-level = 3
+lto = true
+strip = true

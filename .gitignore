@@ -1,0 +1,13 @@
+# Rust build output
+/target
+
+# Packaging build tree and artifacts
+/build
+*.deb
+
+# Editor / OS noise
+*.swp
+*~
+.DS_Store
+.idea/
+.vscode/

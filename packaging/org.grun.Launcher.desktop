@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=grun
+GenericName=Application Launcher
+Comment=Search apps, files, clipboard and more — a fast GTK4 launcher
+Exec=grun
+Icon=org.grun.Launcher
+Terminal=false
+Categories=Utility;
+Keywords=launcher;search;run;
+StartupWMClass=grun
