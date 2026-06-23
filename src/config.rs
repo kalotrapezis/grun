@@ -359,12 +359,6 @@ impl Config {
         }
     }
 
-    pub fn set_position(&mut self, position: &str) {
-        if matches!(position, "center" | "top" | "bottom") {
-            self.position = position.to_string();
-        }
-    }
-
     /// Action prefs (id, enabled) for a category, in display order.
     pub fn action_order(&self, category: &str) -> Vec<(String, bool)> {
         self.action_prefs

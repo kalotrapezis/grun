@@ -828,12 +828,7 @@ fn build_app(app: &Application) -> Rc<dyn Fn()> {
             let follow = cfg.borrow().follow_pointer;
             apply_window_mode(&window, &scroller, &entry, now, follow);
             refresh();
-            // Re-anchor the now differently-sized window. Two ticks: the first
-            // lets the content resize, the second positions the final size.
-            let position = cfg.borrow().position.clone();
-            glib::timeout_add_local_once(std::time::Duration::from_millis(90), move || {
-                move_active_window(&position, now, follow);
-            });
+            window.queue_draw();
         }
     });
 
@@ -936,18 +931,16 @@ fn build_app(app: &Application) -> Rc<dyn Fn()> {
         let follow = cfg_for_toggle.borrow().follow_pointer;
         apply_window_mode(&window, &scroller_for_toggle, &entry, fullscreen, follow);
         refresh();
-        // Open invisible: the WM maps the window at its default (top-left) spot,
-        // and GTK4 can't position on X11, so we map it transparent, move it via
-        // xdotool, then reveal it already centred — no visible jump.
-        window.set_opacity(0.0);
+        // We deliberately do NOT reposition the window. GTK4 can't position on
+        // X11, so the old code moved it via xdotool right after mapping — which
+        // caused a flicker on every open, and the tricks to hide that move
+        // (opacity) broke rendering on muffin. Instead we let the window manager
+        // place it (it remembers the spot across hide/show) and leave it there.
         window.present();
         entry.grab_focus();
-        let position = cfg_for_toggle.borrow().position.clone();
-        let window_for_move = window.clone();
-        glib::timeout_add_local_once(std::time::Duration::from_millis(90), move || {
-            move_active_window(&position, fullscreen, follow);
-            window_for_move.set_opacity(1.0);
-        });
+        // One forced paint so a hide → show of identical (home → home) content
+        // can't leave a stale frame.
+        window.queue_draw();
     })
 }
 
@@ -989,38 +982,6 @@ fn apply_window_mode(
 fn fullscreen_width() -> i32 {
     HOME_ROW_FULL as i32 * (CARD_W + 8) + 32 + 2 * SHADOW_MARGIN
 }
-
-/// Move the currently-active window to position using the window manager
-/// (xdotool); GTK4 has no window-positioning API on X11. Full screen anchors the
-/// large content-sized window near the top, horizontally centred.
-fn move_active_window(position: &str, fullscreen: bool, follow_pointer: bool) {
-    let (mx, my, mw, mh) = monitor_geometry(follow_pointer);
-    let (x, y) = if fullscreen {
-        let ww = fullscreen_width().min(mw);
-        (mx + (mw - ww) / 2, my + 40)
-    } else {
-        let (ww, wh) = (WIN_W, WIN_H);
-        let y = my
-            + match position {
-                "top" => mh / 10,
-                "bottom" => mh * 7 / 10,
-                _ => (mh - wh) / 2, // center
-            };
-        (mx + (mw - ww) / 2, y)
-    };
-    // Wait for the move to finish (it's a fast call) so the caller can reveal the
-    // window only once it's in place — otherwise it flashes at the WM's default
-    // top-left spot before jumping to centre.
-    let _ = std::process::Command::new("xdotool")
-        .args([
-            "getactivewindow",
-            "windowmove",
-            &x.to_string(),
-            &y.to_string(),
-        ])
-        .status();
-}
-
 
 /// Turn a stored clipboard entry into a result row, with Pin/Hide actions.
 fn clip_to_match(c: ClipEntry) -> Match {
@@ -1435,47 +1396,9 @@ fn open_settings(
     *slot.borrow_mut() = Some(rebuild.clone());
     rebuild();
 
-    // Window position selector.
-    let pos_title = Label::new(Some("Pop up at"));
-    pos_title.set_halign(Align::Start);
-    pos_title.set_margin_top(12);
-    pos_title.add_css_class("grun-settings-title");
-    outer.append(&pos_title);
-
-    let cur_pos = cfg.borrow().position.clone();
-    add_choice_row(
-        &outer,
-        "",
-        &[("Top", "top"), ("Center", "center"), ("Bottom", "bottom")],
-        &cur_pos,
-        {
-            let cfg = cfg.clone();
-            Rc::new(move |v: &str| {
-                cfg.borrow_mut().set_position(v);
-                cfg.borrow().save();
-            })
-        },
-    );
-
-    // Which monitor to open on: the one under the pointer, or always the main one.
-    let cur_mon = if cfg.borrow().follow_pointer {
-        "pointer"
-    } else {
-        "main"
-    };
-    add_choice_row(
-        &outer,
-        "Open on",
-        &[("Pointer's monitor", "pointer"), ("Main monitor", "main")],
-        cur_mon,
-        {
-            let cfg = cfg.clone();
-            Rc::new(move |v: &str| {
-                cfg.borrow_mut().follow_pointer = v == "pointer";
-                cfg.borrow().save();
-            })
-        },
-    );
+    // The launcher isn't repositioned (GTK4 can't on X11 without a flicker-y
+    // post-map move), so there's no pop-up-position or monitor setting — the
+    // window manager places it and remembers where.
 
     // --- Home dashboard options ---
     let home_title = Label::new(Some("Home dashboard"));
