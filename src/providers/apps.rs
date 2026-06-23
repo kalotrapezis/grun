@@ -33,11 +33,32 @@ impl Provider for AppsProvider {
     fn query(&self, input: &str) -> Vec<Match> {
         let mut out = Vec::new();
         for app in &self.apps {
+            // Apps hidden for privacy don't appear in search at all.
+            if let Some(id) = app.id() {
+                if self.history.borrow().is_app_hidden(id.as_str()) {
+                    continue;
+                }
+            }
             if let Some(score) = self.score(app, input) {
-                out.push(make_match(app, score));
+                let mut m = make_match(app, score);
+                // A search-only "Hide" action (privacy): home cards get their own
+                // home-only hide instead, so this lives here, not in make_match.
+                if let Some(id) = app.id() {
+                    m.actions.push((
+                        "hide",
+                        "Hide".to_string(),
+                        Action::HideApp(id.to_string()),
+                    ));
+                }
+                out.push(m);
             }
         }
         out
+    }
+
+    // Once the query is more than one word it's no longer an app search.
+    fn wants_multiword(&self) -> bool {
+        false
     }
 }
 

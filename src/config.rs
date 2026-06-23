@@ -137,6 +137,8 @@ pub struct Config {
     pub search_descriptions: bool,
     /// Full-screen "start menu" home layout (home screen only; search unchanged).
     pub fullscreen: bool,
+    /// Require a polkit/sudo password prompt before the settings window opens.
+    pub lock_settings: bool,
     /// Per-category secondary-action order + enabled state.
     pub action_prefs: Vec<CatActions>,
 }
@@ -158,6 +160,7 @@ impl Default for Config {
             focus_delay_ms: 0,
             search_descriptions: false,
             fullscreen: false,
+            lock_settings: false,
             action_prefs: default_action_prefs(),
         }
     }
@@ -223,6 +226,10 @@ impl Config {
                     }
                     "fullscreen" => {
                         cfg.fullscreen = matches!(val, "on" | "true" | "1" | "yes");
+                        continue;
+                    }
+                    "lock_settings" => {
+                        cfg.lock_settings = matches!(val, "on" | "true" | "1" | "yes");
                         continue;
                     }
                     _ => {}
@@ -308,6 +315,10 @@ impl Config {
         body.push_str(&format!(
             "fullscreen={}\n",
             if self.fullscreen { "on" } else { "off" }
+        ));
+        body.push_str(&format!(
+            "lock_settings={}\n",
+            if self.lock_settings { "on" } else { "off" }
         ));
         for c in &self.action_prefs {
             let items = c

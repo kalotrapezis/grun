@@ -45,6 +45,12 @@ pub struct History {
     pub file_uses: Vec<AppStat>,
     #[serde(default)]
     pub hidden_files: Vec<String>,
+    /// App ids hidden from search entirely (privacy) — restorable in settings.
+    #[serde(default)]
+    pub hidden_apps: Vec<String>,
+    /// System/power action commands hidden from search — restorable in settings.
+    #[serde(default)]
+    pub hidden_power: Vec<String>,
     /// App ids the user removed from the home dashboard (still searchable).
     #[serde(default)]
     pub home_hidden_apps: Vec<String>,
@@ -200,6 +206,46 @@ impl History {
 
     pub fn hidden_files(&self) -> Vec<String> {
         self.hidden_files.clone()
+    }
+
+    // ---------- hidden apps (from search entirely, privacy) ----------
+
+    pub fn hide_app(&mut self, id: &str) {
+        if !self.hidden_apps.iter().any(|p| p == id) {
+            self.hidden_apps.push(id.to_string());
+        }
+    }
+
+    pub fn unhide_app(&mut self, id: &str) {
+        self.hidden_apps.retain(|p| p != id);
+    }
+
+    pub fn is_app_hidden(&self, id: &str) -> bool {
+        self.hidden_apps.iter().any(|p| p == id)
+    }
+
+    pub fn hidden_apps(&self) -> Vec<String> {
+        self.hidden_apps.clone()
+    }
+
+    // ---------- hidden system/power actions (from search) ----------
+
+    pub fn hide_power(&mut self, cmd: &str) {
+        if !self.hidden_power.iter().any(|p| p == cmd) {
+            self.hidden_power.push(cmd.to_string());
+        }
+    }
+
+    pub fn unhide_power(&mut self, cmd: &str) {
+        self.hidden_power.retain(|p| p != cmd);
+    }
+
+    pub fn is_power_hidden(&self, cmd: &str) -> bool {
+        self.hidden_power.iter().any(|p| p == cmd)
+    }
+
+    pub fn hidden_power(&self) -> Vec<String> {
+        self.hidden_power.clone()
     }
 
     // ---------- hidden from home dashboard (searchable still) ----------

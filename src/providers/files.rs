@@ -52,6 +52,10 @@ impl Provider for FilesProvider {
             return Vec::new();
         }
         let is_glob = q.contains('*');
+        // Normalize the query's layout variants once up front — scanning 60k
+        // entries while re-normalizing the query each time is what made longer
+        // queries feel slow.
+        let qs = crate::text::query_variants(q);
         // Score cheaply first; only build the (icon-resolving) Match for the few
         // results we actually keep, so a broad query stays responsive.
         let mut scored: Vec<(f32, &Entry)> = Vec::new();
@@ -64,7 +68,7 @@ impl Provider for FilesProvider {
                 }
             } else {
                 // Files rank just below apps at equal quality.
-                crate::text::relevance(q, &e.name).map(|s| s * 0.8)
+                crate::text::relevance_pre(&qs, &e.name).map(|s| s * 0.8)
             };
             if let Some(score) = score {
                 scored.push((score, e));

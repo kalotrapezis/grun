@@ -1,6 +1,6 @@
 [package]
 name = "grun"
-version = "0.0.2"
+version = "0.0.3"
 edition = "2021"
 description = "A fast GTK4 application launcher inspired by KRunner, for Cinnamon / Linux Mint"
 license = "GPL-3.0-or-later"

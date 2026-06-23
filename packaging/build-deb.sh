@@ -38,6 +38,7 @@ Section: utils
 Priority: optional
 Architecture: $ARCH
 Depends: libgtk-4-1 (>= 4.6), xclip, xdotool
+Recommends: policykit-1
 Installed-Size: $INSTALLED_KB
 Maintainer: teo <kalotrapezis@gmail.com>
 Description: Fast GTK4 application launcher

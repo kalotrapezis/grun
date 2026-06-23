@@ -5,6 +5,9 @@
 
 use super::Provider;
 use crate::matching::{Action, Match};
+use crate::state::History;
+use std::cell::RefCell;
+use std::rc::Rc;
 
 struct PowerAction {
     label: &'static str,
@@ -55,7 +58,15 @@ const ACTIONS: &[PowerAction] = &[
     },
 ];
 
-pub struct PowerProvider;
+pub struct PowerProvider {
+    history: Rc<RefCell<History>>,
+}
+
+impl PowerProvider {
+    pub fn new(history: Rc<RefCell<History>>) -> Self {
+        PowerProvider { history }
+    }
+}
 
 impl Provider for PowerProvider {
     fn query(&self, input: &str) -> Vec<Match> {
@@ -65,6 +76,10 @@ impl Provider for PowerProvider {
         }
         let mut out = Vec::new();
         for a in ACTIONS {
+            // Actions the user hid (e.g. Sleep) never surface.
+            if self.history.borrow().is_power_hidden(a.cmd) {
+                continue;
+            }
             // Best relevance across this action's aliases; keep it tight so a
             // loose subsequence match doesn't pop a power action unexpectedly.
             let best = a
@@ -73,16 +88,35 @@ impl Provider for PowerProvider {
                 .filter_map(|alias| crate::text::relevance(q, alias))
                 .fold(0.0f32, f32::max);
             if best >= 0.6 {
-                out.push(Match::new(
+                let mut m = Match::new(
                     a.label.to_string(),
                     a.cmd.to_string(),
                     Some(a.icon.to_string()),
                     best,
                     "System",
                     Action::Shell(a.cmd.to_string()),
+                );
+                // Per-result Hide, just like apps — restorable in settings.
+                m.actions.push((
+                    "hide",
+                    "Hide".to_string(),
+                    Action::HidePower(a.cmd.to_string()),
                 ));
+                out.push(m);
             }
         }
         out
     }
+    // Power stays on multi-word queries: it costs only six comparisons, and one
+    // of its own aliases ("log out") is two words, so skipping it would hide the
+    // very action the user typed.
+}
+
+/// The human label for a power action's command (for the settings restore list).
+pub fn label_for_cmd(cmd: &str) -> String {
+    ACTIONS
+        .iter()
+        .find(|a| a.cmd == cmd)
+        .map(|a| a.label.to_string())
+        .unwrap_or_else(|| cmd.to_string())
 }
