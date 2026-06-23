@@ -139,6 +139,9 @@ pub struct Config {
     pub fullscreen: bool,
     /// Require a polkit/sudo password prompt before the settings window opens.
     pub lock_settings: bool,
+    /// Open on the monitor under the mouse pointer (true) or always the main
+    /// monitor (false).
+    pub follow_pointer: bool,
     /// Per-category secondary-action order + enabled state.
     pub action_prefs: Vec<CatActions>,
 }
@@ -161,6 +164,7 @@ impl Default for Config {
             search_descriptions: false,
             fullscreen: false,
             lock_settings: false,
+            follow_pointer: true,
             action_prefs: default_action_prefs(),
         }
     }
@@ -230,6 +234,10 @@ impl Config {
                     }
                     "lock_settings" => {
                         cfg.lock_settings = matches!(val, "on" | "true" | "1" | "yes");
+                        continue;
+                    }
+                    "follow_pointer" => {
+                        cfg.follow_pointer = matches!(val, "on" | "true" | "1" | "yes");
                         continue;
                     }
                     _ => {}
@@ -319,6 +327,10 @@ impl Config {
         body.push_str(&format!(
             "lock_settings={}\n",
             if self.lock_settings { "on" } else { "off" }
+        ));
+        body.push_str(&format!(
+            "follow_pointer={}\n",
+            if self.follow_pointer { "on" } else { "off" }
         ));
         for c in &self.action_prefs {
             let items = c

@@ -3,6 +3,21 @@
 All notable changes to grun are documented here. This project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## [0.0.4] — 2026-06-23
+
+### Added
+
+- **"Open on" monitor setting** — choose whether grun opens on the monitor under
+  the mouse pointer (default — it follows you across monitors and adapts when the
+  layout changes) or always on the main monitor. Settings → "Open on".
+
+### Changed
+
+- **No open flash** — the launcher now maps invisibly, is positioned, and only
+  then reveals itself already centred, instead of briefly flashing at the
+  window-manager's top-left corner first. (GTK4 can't position windows on X11, so
+  grun moves itself via xdotool right after mapping.)
+
 ## [0.0.3] — 2026-06-23
 
 ### Added
