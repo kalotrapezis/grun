@@ -10,7 +10,7 @@
 ![Built with Rust](https://img.shields.io/badge/built%20with-Rust-orange)
 ![GTK4](https://img.shields.io/badge/GTK-4-green)
 
-<img src="docs/screenshot.png" width="760" alt="grun screenshot">
+<img src="Screenshots/homePage.png" width="720" alt="grun home dashboard">
 
 </div>
 
@@ -44,6 +44,23 @@ dependencies), so while it's tuned for Cinnamon/Mint it runs on any GTK desktop.
 - ⌨️ **Fully keyboard driven** — see [Keyboard](#keyboard) below.
 - ⚙️ **Configurable** — reorder/disable every function and every per-result
   action, choose the pop-up position, auto-focus delay, and more.
+
+## Screenshots
+
+**Type in any keyboard layout** — `ζεν` (Greek keys) finds *Zen Browser* and
+*Zenmap*, ranked by how often you actually use them:
+
+![Layout-independent search](Screenshots/keyboard-layout-does-not-matter.png)
+
+**Search app descriptions and files** — `screenshot` finds *Flameshot* (matched
+on its description) alongside matching files:
+
+![Description and file search](Screenshots/app-description-search-and-file-search.png)
+
+**Web search and more** — any query can go to Google / DuckDuckGo, or be handed
+to Claude:
+
+![Web search](Screenshots/search.png)
 
 ## Install
 
