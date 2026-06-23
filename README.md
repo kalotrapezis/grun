@@ -10,7 +10,7 @@
 ![Built with Rust](https://img.shields.io/badge/built%20with-Rust-orange)
 ![GTK4](https://img.shields.io/badge/GTK-4-green)
 
-<img src="Screenshots/homePage.png" width="720" alt="grun home dashboard">
+<img src="Screenshots/home-dashboard.png" width="720" alt="grun home dashboard">
 
 </div>
 
