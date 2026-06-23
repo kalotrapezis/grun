@@ -28,9 +28,24 @@ use std::collections::HashMap;
 const APP_ID: &str = "org.grun.Launcher";
 const WIN_W: i32 = 860;
 const WIN_H: i32 = 720;
+/// Tallest the scrollable result area grows before it starts scrolling. Leaves
+/// room for the search bar so the whole window peaks near WIN_H.
+const CONTENT_MAX_H: i32 = WIN_H - 80;
+/// Home dashboard cards per row (one row collapsed, two when expanded).
+const HOME_ROW: usize = 3;
+/// Cards per row in the full-screen app grid.
+const HOME_ROW_FULL: usize = 6;
+/// Fixed home-card size, so cards form a uniform grid regardless of how many
+/// side-action buttons a card has (Flatpak apps have an extra "Uninstall", etc.)
+/// and wrap into rows instead of stretching to fill (which broke the layout).
+const CARD_W: i32 = 270;
+const CARD_H: i32 = 176;
 
 // Assets embedded at build time, so the binary is self-contained (no dependency
 // on the source tree at runtime — important for a packaged install).
+// Section icons come in dark (light-coloured) and light (dark-coloured) variants
+// so they read well on either system theme. Both sets are embedded and written
+// to disk on first run; `section_icon` picks the right one per the active theme.
 const EMB_CLIPBOARD: &[u8] =
     include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/Assets/Dark-Clipboard.svg"));
 const EMB_APPS: &[u8] = include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/Assets/Dark-apps.svg"));
@@ -38,51 +53,90 @@ const EMB_FILES: &[u8] =
     include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/Assets/Dark-Files.svg"));
 const EMB_SEARCH: &[u8] =
     include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/Assets/Dark-search.svg"));
+const EMB_AI: &[u8] = include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/Assets/Dark-Ai.svg"));
+const EMB_CLIPBOARD_LIGHT: &[u8] =
+    include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/Assets/Light-Clipboard.svg"));
+const EMB_APPS_LIGHT: &[u8] =
+    include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/Assets/Light-apps.svg"));
+const EMB_FILES_LIGHT: &[u8] =
+    include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/Assets/Light-Files.svg"));
+const EMB_SEARCH_LIGHT: &[u8] =
+    include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/Assets/Light-search.svg"));
+const EMB_AI_LIGHT: &[u8] =
+    include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/Assets/Light-AI.svg"));
+// Expand / collapse arrows for the home section headers.
+const EMB_DOWN: &[u8] =
+    include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/Assets/Dark-pointer-Down.svg"));
+const EMB_UP: &[u8] =
+    include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/Assets/Dark-pointer-up.svg"));
+const EMB_DOWN_LIGHT: &[u8] =
+    include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/Assets/Light-pointer-Down.svg"));
+const EMB_UP_LIGHT: &[u8] =
+    include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/Assets/Light-pointer-up.svg"));
 const EMB_APPICON_256: &[u8] =
     include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/Assets/AppIcon-256.png"));
 const EMB_APPICON_512: &[u8] =
     include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/Assets/AppIcon-512.png"));
 
+// Colours are taken from the running GTK theme so grun follows the system
+// light/dark theme and its Mint-Y accent automatically:
+//   @theme_bg_color / @theme_fg_color  — window background / foreground
+//   @theme_selected_bg_color / _fg     — the accent (selection) colour
+// Surfaces are solid (Mint-Y has no transparency by default); `alpha()` is only
+// used for subtle borders and muted text that composite over those solid colours.
 const CSS: &str = r#"
 window {
-    background-color: rgba(28, 28, 36, 0.86);
-    border-radius: 14px;
+    background-color: @theme_bg_color;
+    color: @theme_fg_color;
+    border: 1px solid alpha(@theme_fg_color, 0.18);
+    border-radius: 12px;
 }
 .grun-entry {
     font-size: 20px;
     padding: 16px 18px;
     border: none;
     background: transparent;
-    color: #ffffff;
+    color: @theme_fg_color;
     box-shadow: none;
     outline: none;
+}
+/* The search bar (entry + gear). It glows with the accent colour while the
+   entry has focus, so on open the focus is clearly on the search box. */
+.grun-searchbar {
+    border: 1px solid transparent;
+    border-radius: 12px;
+    margin: 6px;
+}
+.grun-searchbar.focused {
+    border-color: @theme_selected_bg_color;
+    box-shadow: 0 0 6px 0 alpha(@theme_selected_bg_color, 0.55);
 }
 .grun-gear {
     background: transparent;
     border: none;
     box-shadow: none;
     margin: 6px;
-    color: rgba(255, 255, 255, 0.6);
+    color: alpha(@theme_fg_color, 0.6);
 }
-.grun-gear:hover { color: #ffffff; }
+.grun-gear:hover { color: @theme_fg_color; }
 .grun-row {
     padding: 8px 12px;
     margin: 1px 6px;
     border-radius: 10px;
 }
-.grun-row.selected { background-color: rgba(120, 170, 255, 0.28); }
-.grun-title { color: #ffffff; font-size: 14px; font-weight: bold; }
-.grun-sub { color: rgba(255, 255, 255, 0.55); font-size: 12px; }
+.grun-row.selected { background-color: mix(@theme_bg_color, @theme_selected_bg_color, 0.35); }
+.grun-title { color: @theme_fg_color; font-size: 14px; font-weight: bold; }
+.grun-sub { color: alpha(@theme_fg_color, 0.55); font-size: 12px; }
 .grun-section {
-    color: rgba(255, 255, 255, 0.45);
+    color: alpha(@theme_fg_color, 0.5);
     font-size: 11px;
     font-weight: bold;
     text-transform: uppercase;
     letter-spacing: 1px;
 }
 .grun-letter {
-    color: rgba(255, 255, 255, 0.85);
-    background-color: rgba(255, 255, 255, 0.12);
+    color: @theme_fg_color;
+    background-color: alpha(@theme_fg_color, 0.12);
     border-radius: 6px;
     padding: 1px 7px;
     font-weight: bold;
@@ -90,8 +144,8 @@ window {
     min-width: 14px;
 }
 .grun-chip {
-    background-color: rgba(255, 255, 255, 0.10);
-    color: rgba(255, 255, 255, 0.8);
+    background-color: alpha(@theme_fg_color, 0.10);
+    color: alpha(@theme_fg_color, 0.85);
     border: none;
     box-shadow: none;
     border-radius: 8px;
@@ -99,26 +153,36 @@ window {
     font-size: 11px;
     min-height: 0;
 }
-.grun-chip:hover { background-color: rgba(255, 255, 255, 0.2); color: #ffffff; }
+.grun-chip:hover { background-color: alpha(@theme_selected_bg_color, 0.30); color: @theme_fg_color; }
 .grun-tag {
-    color: rgba(180, 210, 255, 0.9);
-    background-color: rgba(120, 170, 255, 0.18);
+    color: #ffffff;
+    background-color: @theme_selected_bg_color;
     border-radius: 5px;
-    padding: 0 6px;
+    /* Enough vertical padding that descenders (p, g) clear the background. */
+    padding: 2px 8px;
     font-size: 10px;
     font-weight: bold;
 }
+/* Package-type colours: deb/system red, AppImage blue, Flatpak green, Snap orange. */
+.grun-tag-system { background-color: #d64541; }
+.grun-tag-appimage { background-color: #2f80ed; }
+.grun-tag-flatpak { background-color: #27ae60; }
+.grun-tag-snap { background-color: #e67e22; }
 .grun-card {
     padding: 16px;
-    margin: 6px;
-    border-radius: 12px;
-    background-color: rgba(255, 255, 255, 0.05);
+    margin: 0;
+    border-radius: 10px;
+    background-color: @theme_base_color;
+    border: 1px solid alpha(@theme_fg_color, 0.12);
 }
-.grun-card.selected { background-color: rgba(120, 170, 255, 0.28); }
-.grun-card-title { color: #ffffff; font-size: 15px; font-weight: bold; }
+.grun-card.selected {
+    background-color: mix(@theme_base_color, @theme_selected_bg_color, 0.45);
+    border-color: @theme_selected_bg_color;
+}
+.grun-card-title { color: @theme_fg_color; font-size: 15px; font-weight: bold; }
 .grun-side {
-    background-color: rgba(255, 255, 255, 0.10);
-    color: rgba(255, 255, 255, 0.85);
+    background-color: alpha(@theme_fg_color, 0.10);
+    color: alpha(@theme_fg_color, 0.85);
     border: none;
     box-shadow: none;
     border-radius: 8px;
@@ -126,10 +190,10 @@ window {
     font-size: 11px;
     min-height: 0;
 }
-.grun-side:hover { background-color: rgba(255, 255, 255, 0.2); color: #ffffff; }
+.grun-side:hover { background-color: alpha(@theme_selected_bg_color, 0.30); color: @theme_fg_color; }
 .grun-card-letter {
-    background-color: rgba(120, 170, 255, 0.22);
-    color: #ffffff;
+    background-color: alpha(@theme_selected_bg_color, 0.22);
+    color: @theme_fg_color;
     border-radius: 8px;
     padding: 8px;
     font-size: 15px;
@@ -137,18 +201,18 @@ window {
 }
 .grun-settings-title { font-size: 18px; font-weight: bold; margin-bottom: 8px; }
 .grun-choice.active {
-    background-color: rgba(120, 170, 255, 0.55);
-    color: #ffffff;
+    background-color: @theme_selected_bg_color;
+    color: @theme_selected_fg_color;
     font-weight: bold;
 }
 .grun-save {
-    background-color: rgba(120, 170, 255, 0.5);
-    color: #ffffff;
+    background-color: @theme_selected_bg_color;
+    color: @theme_selected_fg_color;
     font-weight: bold;
     padding: 8px;
     border-radius: 8px;
 }
-.grun-save:hover { background-color: rgba(120, 170, 255, 0.7); }
+.grun-save:hover { background-color: alpha(@theme_selected_bg_color, 0.85); }
 "#;
 
 fn main() -> glib::ExitCode {
@@ -249,22 +313,39 @@ fn build_app(app: &Application) -> Rc<dyn Fn()> {
         .build();
     entry.add_css_class("grun-entry");
 
+    let full_btn = Button::from_icon_name(if cfg.borrow().fullscreen {
+        "view-restore-symbolic"
+    } else {
+        "view-fullscreen-symbolic"
+    });
+    full_btn.add_css_class("grun-gear");
+    full_btn.set_valign(Align::Center);
+    full_btn.set_tooltip_text(Some("Full-screen start-menu home"));
+
     let gear = Button::from_icon_name("emblem-system-symbolic");
     gear.add_css_class("grun-gear");
     gear.set_valign(Align::Center);
 
     let top = GtkBox::new(Orientation::Horizontal, 0);
+    top.add_css_class("grun-searchbar");
     top.append(&entry);
+    top.append(&full_btn);
     top.append(&gear);
 
     // Results live in a plain vertical box so we control grouping, per-row
     // letters, action chips, and highlight directly.
     let results_box = GtkBox::new(Orientation::Vertical, 2);
 
+    // The window sizes to its content: it requests the result list's natural
+    // height (so an empty home is just the search box) and grows as results come
+    // in, capped at CONTENT_MAX_H — beyond that the list scrolls. This makes the
+    // window shrink when categories are disabled or items are hidden.
     let scroller = ScrolledWindow::builder()
         .hscrollbar_policy(PolicyType::Never)
         .vscrollbar_policy(PolicyType::Automatic)
-        .vexpand(true)
+        .propagate_natural_height(true)
+        .min_content_height(0)
+        .max_content_height(CONTENT_MAX_H)
         .child(&results_box)
         .build();
 
@@ -276,7 +357,6 @@ fn build_app(app: &Application) -> Rc<dyn Fn()> {
         .application(app)
         .title("grunlauncher")
         .default_width(WIN_W)
-        .default_height(WIN_H)
         .decorated(false)
         .resizable(false)
         .child(&vbox)
@@ -292,9 +372,26 @@ fn build_app(app: &Application) -> Rc<dyn Fn()> {
     let rows: Rc<RefCell<Vec<gtk4::Widget>>> = Rc::new(RefCell::new(Vec::new()));
     let selected = Rc::new(RefCell::new(0usize));
     let nav_mode = Rc::new(RefCell::new(false));
+    // Per-section "expand" state on the home dashboard (category → showing 2 rows).
+    // Runtime only; resets to collapsed each time grun is opened.
+    let expanded: Rc<RefCell<HashMap<String, bool>>> = Rc::new(RefCell::new(HashMap::new()));
     // Generation counter so each keystroke cancels the previous auto-focus timer.
     let focus_gen = Rc::new(std::cell::Cell::new(0u64));
     let refresh_slot: Rc<RefCell<Option<Rc<dyn Fn()>>>> = Rc::new(RefCell::new(None));
+
+    // Glow the search bar only while in search mode (typing), not while the user
+    // is navigating the list below — where the keyboard drives row selection and
+    // typing is disabled, so a glow would wrongly imply you can write.
+    let set_search_glow: Rc<dyn Fn(bool)> = {
+        let top = top.clone();
+        Rc::new(move |active: bool| {
+            if active {
+                top.add_css_class("focused");
+            } else {
+                top.remove_css_class("focused");
+            }
+        })
+    };
 
     // Highlight row `idx`.
     let select: Rc<dyn Fn(usize)> = {
@@ -375,40 +472,101 @@ fn build_app(app: &Application) -> Rc<dyn Fn()> {
         let run_secondary = run_secondary.clone();
         let app_index = app_index.clone();
         let cfg = cfg.clone();
+        let nav_mode = nav_mode.clone();
+        let selected = selected.clone();
+        let expanded = expanded.clone();
+        let refresh_slot = refresh_slot.clone();
         Rc::new(move || {
             let query = entry.text();
             let results: Vec<Match> = if query.trim().is_empty() {
-                // Default dashboard, ordered per settings.
+                // Default dashboard, ordered per settings. Each section shows one
+                // row (HOME_ROW), or two when "expanded". Full-screen mode is a
+                // start menu sized to the screen: one clipboard row on top, one
+                // files row at the bottom, and as many app rows as fit between.
                 let c = cfg.borrow();
                 let h = history.borrow();
+                let fs = c.fullscreen;
+                let exp = |cat: &str| expanded.borrow().get(cat).copied().unwrap_or(false);
+                let cap = |cat: &str| if exp(cat) { HOME_ROW * 2 } else { HOME_ROW };
+                // How many app rows fit on screen between the clipboard and files
+                // rows (full screen only).
+                let app_rows_fit = || {
+                    let (_, _, _, mh) = monitor_geometry();
+                    let row_h = CARD_H + 12; // card + row spacing/margin
+                    // search bar + clipboard (header + row) + files (header + row)
+                    // + apps header + outer padding.
+                    let reserved = 80 + 2 * (30 + row_h) + 30 + 60;
+                    (((mh - reserved) / row_h).max(1)) as usize
+                };
                 let mut v = Vec::new();
                 if c.home_clipboard {
-                    v.extend(h.visible_clips().into_iter().take(3).map(clip_to_match));
+                    let n = if fs { HOME_ROW_FULL } else { cap("Clipboard") };
+                    v.extend(h.visible_clips().into_iter().take(n).map(clip_to_match));
                 }
-                let app_ids = if c.home_apps_mode == "recent" {
-                    h.recent_apps(3)
+                // Pull extra candidates so dropping home-hidden ones still fills
+                // the row. Each card gets a "Hide" action that removes it from the
+                // home dashboard only (it stays searchable).
+                let app_ids: Vec<String> = if fs {
+                    // Start menu: most-used apps first, enough to fill the rows
+                    // that fit on screen.
+                    let want = app_rows_fit() * HOME_ROW_FULL;
+                    let mut ids: Vec<String> = app_index.keys().cloned().collect();
+                    ids.sort_by(|a, b| {
+                        h.app_count(b)
+                            .cmp(&h.app_count(a))
+                            .then_with(|| app_index[a].display_name().cmp(&app_index[b].display_name()))
+                    });
+                    ids.into_iter()
+                        .filter(|id| !h.is_home_app_hidden(id))
+                        .take(want)
+                        .collect()
                 } else {
-                    h.top_apps(3)
+                    if c.home_apps_mode == "recent" {
+                        h.recent_apps(24)
+                    } else {
+                        h.top_apps(24)
+                    }
+                    .into_iter()
+                    .filter(|id| !h.is_home_app_hidden(id) && app_index.contains_key(id))
+                    .take(cap("Apps"))
+                    .collect()
                 };
                 for id in app_ids {
-                    if let Some(app) = app_index.get(&id) {
-                        v.push(app_to_match(app, 1.0));
-                    }
+                    let app = &app_index[&id];
+                    let mut m = app_to_match(app, 1.0);
+                    m.actions
+                        .push(("hide_home", "Hide".to_string(), Action::HideHomeApp(id.clone())));
+                    v.push(m);
                 }
+                let nfiles = if fs { HOME_ROW_FULL } else { cap("Files") };
                 let file_paths: Vec<std::path::PathBuf> = if c.home_files_mode == "used" {
-                    h.most_used_files(3)
+                    h.most_used_files(24)
                         .into_iter()
                         .map(std::path::PathBuf::from)
                         .collect()
                 } else {
                     // "Recent" comes from the system recent-files list (the same
                     // one Nemo and the menu use), so it's populated immediately.
-                    system_recent_files(3)
-                };
+                    system_recent_files(24)
+                }
+                .into_iter()
+                .filter(|p| {
+                    let s = p.to_string_lossy();
+                    p.exists() && !h.is_home_file_hidden(&s) && !h.is_file_hidden(&s)
+                })
+                .take(nfiles)
+                .collect();
                 for path in file_paths {
-                    if path.exists() {
-                        v.push(file_to_match(&path, 1.0));
-                    }
+                    let mut m = file_to_match(&path, 1.0);
+                    // The global "hide" doesn't belong on the home card — swap it
+                    // for a home-only hide.
+                    m.actions.retain(|(id, _, _)| *id != "hide");
+                    m.actions.push((
+                        "hide_home",
+                        "Hide".to_string(),
+                        Action::HideHomeFile(path.clone()),
+                    ));
+                    v.push(m);
                 }
                 v
             } else {
@@ -433,26 +591,51 @@ fn build_app(app: &Application) -> Rc<dyn Fn()> {
             }
             rows.borrow_mut().clear();
 
-            // Dashboard (empty query) = grid: each section a horizontal row of
-            // cards. Active search = vertical list of lettered rows with chips.
+            // Dashboard (empty query) = a wrapping grid of cards per section.
+            // Active search = vertical list of lettered rows with chips. On the
+            // dashboard (but not full-screen) each section header carries an
+            // expand/collapse toggle that switches between one and two rows.
             let dashboard = query.trim().is_empty();
+            let fullscreen = cfg.borrow().fullscreen;
+            let per_row = if fullscreen { HOME_ROW_FULL } else { HOME_ROW };
             let mut prev_cat = "";
-            let mut cards_box: Option<GtkBox> = None;
+            // Each dashboard section is a left-aligned vertical box sized to its
+            // card rows, so the header (and its expand toggle) lines up with the
+            // cards instead of stretching to the window edge. Cards wrap into
+            // fixed-size rows: a new row starts every `per_row` cards.
+            let mut cur_section: Option<GtkBox> = None;
+            let mut cur_row: Option<GtkBox> = None;
+            let mut cat_count = 0usize;
             for (i, m) in results.iter().enumerate() {
                 let letter = char::from(b'A' + (i as u8).min(25));
                 if m.category != prev_cat {
-                    results_box.append(&section_header(m.category));
-                    prev_cat = m.category;
-                    cards_box = if dashboard {
-                        let cb = GtkBox::new(Orientation::Horizontal, 8);
-                        cb.set_homogeneous(true);
-                        cb.set_margin_start(8);
-                        cb.set_margin_end(8);
-                        results_box.append(&cb);
-                        Some(cb)
+                    if dashboard {
+                        let section = GtkBox::new(Orientation::Vertical, 0);
+                        section.set_halign(Align::Start);
+                        let expandable = !fullscreen;
+                        let is_exp = expanded.borrow().get(m.category).copied().unwrap_or(false);
+                        let (header, toggle) = home_section_header(m.category, expandable, is_exp);
+                        if let Some(btn) = toggle {
+                            let expanded = expanded.clone();
+                            let refresh_slot = refresh_slot.clone();
+                            let cat = m.category.to_string();
+                            btn.connect_clicked(move |_| {
+                                let cur = expanded.borrow().get(&cat).copied().unwrap_or(false);
+                                expanded.borrow_mut().insert(cat.clone(), !cur);
+                                if let Some(r) = refresh_slot.borrow().clone() {
+                                    r();
+                                }
+                            });
+                        }
+                        section.append(&header);
+                        results_box.append(&section);
+                        cur_section = Some(section);
                     } else {
-                        None
-                    };
+                        results_box.append(&section_header(m.category));
+                    }
+                    prev_cat = m.category;
+                    cur_row = None;
+                    cat_count = 0;
                 }
 
                 let gesture = gtk4::GestureClick::new();
@@ -462,14 +645,31 @@ fn build_app(app: &Application) -> Rc<dyn Fn()> {
                 }
 
                 if dashboard {
-                    let (card, chips) = build_card(letter, m);
+                    // Start a fresh row every `per_row` cards in this section.
+                    if cat_count % per_row == 0 {
+                        let rb = GtkBox::new(Orientation::Horizontal, 8);
+                        rb.set_halign(Align::Start);
+                        rb.set_margin_start(8);
+                        rb.set_margin_end(8);
+                        rb.set_margin_top(4);
+                        if let Some(s) = &cur_section {
+                            s.append(&rb);
+                        }
+                        cur_row = Some(rb);
+                    }
+                    cat_count += 1;
+                    // The full-screen app grid can hold hundreds of items, so
+                    // per-card letters (which only address the first 26) are
+                    // dropped there — navigate it by typing instead.
+                    let badge = if fullscreen { None } else { Some(letter) };
+                    let (card, chips) = build_card(badge, m);
                     for (n, chip) in chips.into_iter().enumerate() {
                         let run_secondary = run_secondary.clone();
                         chip.connect_clicked(move |_| run_secondary(i, n));
                     }
                     card.add_controller(gesture);
-                    if let Some(cb) = &cards_box {
-                        cb.append(&card);
+                    if let Some(rb) = &cur_row {
+                        rb.append(&card);
                     }
                     rows.borrow_mut().push(card.upcast::<gtk4::Widget>());
                 } else {
@@ -484,8 +684,14 @@ fn build_app(app: &Application) -> Rc<dyn Fn()> {
                 }
             }
             *matches.borrow_mut() = results;
-            if !rows.borrow().is_empty() {
+            // Only paint a row as selected once the user is navigating the list.
+            // While typing (focus in the search box) no row is highlighted — the
+            // search bar's accent glow shows where focus is. The first Tab/↓ then
+            // highlights row 0 correctly.
+            if *nav_mode.borrow() && !rows.borrow().is_empty() {
                 select(0);
+            } else {
+                *selected.borrow_mut() = 0;
             }
         })
     };
@@ -499,8 +705,10 @@ fn build_app(app: &Application) -> Rc<dyn Fn()> {
         let cfg = cfg.clone();
         let select = select.clone();
         let focus_gen = focus_gen.clone();
+        let set_search_glow = set_search_glow.clone();
         move |e| {
             *nav_mode.borrow_mut() = false;
+            set_search_glow(true);
             refresh();
             let g = focus_gen.get().wrapping_add(1);
             focus_gen.set(g);
@@ -509,11 +717,13 @@ fn build_app(app: &Application) -> Rc<dyn Fn()> {
                 let nav_mode = nav_mode.clone();
                 let select = select.clone();
                 let focus_gen = focus_gen.clone();
+                let set_search_glow = set_search_glow.clone();
                 glib::timeout_add_local_once(
                     std::time::Duration::from_millis(delay as u64),
                     move || {
                         if focus_gen.get() == g && !*nav_mode.borrow() {
                             *nav_mode.borrow_mut() = true;
+                            set_search_glow(false);
                             select(0);
                         }
                     },
@@ -522,21 +732,65 @@ fn build_app(app: &Application) -> Rc<dyn Fn()> {
         }
     });
 
-    // Gear → settings window.
+    // Gear → settings window. Keep a handle so a second click focuses the
+    // existing window instead of opening a duplicate.
+    let settings_win: Rc<RefCell<Option<Window>>> = Rc::new(RefCell::new(None));
     gear.connect_clicked({
         let window = window.clone();
         let cfg = cfg.clone();
         let registry = registry.clone();
         let refresh = refresh.clone();
         let history = history.clone();
+        let settings_win = settings_win.clone();
         move |_| {
-            open_settings(
+            if let Some(w) = settings_win.borrow().clone() {
+                w.present();
+                return;
+            }
+            let w = open_settings(
                 &window,
                 cfg.clone(),
                 registry.clone(),
                 refresh.clone(),
                 history.clone(),
-            )
+            );
+            // Forget the handle once it closes, so it can be reopened later.
+            w.connect_close_request({
+                let settings_win = settings_win.clone();
+                move |_| {
+                    *settings_win.borrow_mut() = None;
+                    glib::Propagation::Proceed
+                }
+            });
+            *settings_win.borrow_mut() = Some(w);
+        }
+    });
+
+    // Full-screen toggle: switch the home into / out of the start-menu layout,
+    // resize the window to match, and persist the choice.
+    full_btn.connect_clicked({
+        let cfg = cfg.clone();
+        let window = window.clone();
+        let scroller = scroller.clone();
+        let refresh = refresh.clone();
+        let full_btn = full_btn.clone();
+        move |_| {
+            let now = !cfg.borrow().fullscreen;
+            cfg.borrow_mut().fullscreen = now;
+            cfg.borrow().save();
+            full_btn.set_icon_name(if now {
+                "view-restore-symbolic"
+            } else {
+                "view-fullscreen-symbolic"
+            });
+            apply_window_mode(&window, &scroller, now);
+            refresh();
+            // Re-anchor the now differently-sized window. Two ticks: the first
+            // lets the content resize, the second positions the final size.
+            let position = cfg.borrow().position.clone();
+            glib::timeout_add_local_once(std::time::Duration::from_millis(90), move || {
+                move_active_window(&position, now);
+            });
         }
     });
 
@@ -553,6 +807,7 @@ fn build_app(app: &Application) -> Rc<dyn Fn()> {
         let run_secondary = run_secondary.clone();
         let win = window.clone();
         let entry = entry.clone();
+        let set_search_glow = set_search_glow.clone();
         key.connect_key_pressed(move |_, keyval, _code, _state| {
             use glib::Propagation::{Proceed, Stop};
             let nav = *nav_mode.borrow();
@@ -560,6 +815,7 @@ fn build_app(app: &Application) -> Rc<dyn Fn()> {
                 gdk::Key::Escape => {
                     if nav {
                         *nav_mode.borrow_mut() = false;
+                        set_search_glow(true);
                         entry.grab_focus();
                     } else {
                         win.set_visible(false);
@@ -569,6 +825,7 @@ fn build_app(app: &Application) -> Rc<dyn Fn()> {
                 gdk::Key::Tab | gdk::Key::Down => {
                     if !nav {
                         *nav_mode.borrow_mut() = true;
+                        set_search_glow(false);
                         select(0);
                     } else {
                         let s = *selected.borrow();
@@ -620,37 +877,76 @@ fn build_app(app: &Application) -> Rc<dyn Fn()> {
     // The toggle: show (cleared + focused + positioned) if hidden, else hide.
     let cfg_for_toggle = cfg.clone();
     let nav_for_toggle = nav_mode.clone();
+    let scroller_for_toggle = scroller.clone();
+    let expanded_for_toggle = expanded.clone();
     Rc::new(move || {
         if window.is_visible() {
             window.set_visible(false);
             return;
         }
         *nav_for_toggle.borrow_mut() = false;
+        // Each open starts collapsed.
+        expanded_for_toggle.borrow_mut().clear();
+        set_search_glow(true);
         entry.set_text("");
+        let fullscreen = cfg_for_toggle.borrow().fullscreen;
+        apply_window_mode(&window, &scroller_for_toggle, fullscreen);
         refresh();
         window.present();
         entry.grab_focus();
         let position = cfg_for_toggle.borrow().position.clone();
         // Move once the window is mapped (GTK4 can't position on X11, so use the
         // window manager via xdotool).
-        glib::timeout_add_local_once(std::time::Duration::from_millis(70), move || {
-            move_active_window(&position);
+        glib::timeout_add_local_once(std::time::Duration::from_millis(90), move || {
+            move_active_window(&position, fullscreen);
         });
     })
 }
 
-/// Move the currently-active window to the configured screen position using the
-/// window manager (xdotool). GTK4 has no window-positioning API on X11.
-fn move_active_window(position: &str) {
+/// Size the window for the current mode. We avoid the WM's (Cinnamon-flaky)
+/// fullscreen state: full screen instead pins a fixed large minimum size so the
+/// window stays big even while searching (a short result list won't shrink it);
+/// normal mode clears that and content-fits up to a cap.
+fn apply_window_mode(window: &ApplicationWindow, scroller: &ScrolledWindow, fullscreen: bool) {
+    if fullscreen {
+        let (_, _, mw, mh) = monitor_geometry();
+        let fs_w = fullscreen_width().min(mw);
+        let fs_h = (mh - 80).max(400);
+        window.set_size_request(fs_w, fs_h);
+        scroller.set_propagate_natural_height(false);
+        scroller.set_max_content_height(-1);
+        scroller.set_vexpand(true);
+    } else {
+        window.set_size_request(-1, -1);
+        scroller.set_vexpand(false);
+        scroller.set_propagate_natural_height(true);
+        scroller.set_max_content_height(CONTENT_MAX_H);
+    }
+}
+
+/// Estimated width of the full-screen start menu (rows of HOME_ROW_FULL cards).
+fn fullscreen_width() -> i32 {
+    HOME_ROW_FULL as i32 * (CARD_W + 8) + 32
+}
+
+/// Move the currently-active window to position using the window manager
+/// (xdotool); GTK4 has no window-positioning API on X11. Full screen anchors the
+/// large content-sized window near the top, horizontally centred.
+fn move_active_window(position: &str, fullscreen: bool) {
     let (mx, my, mw, mh) = monitor_geometry();
-    let (ww, wh) = (WIN_W, WIN_H);
-    let x = mx + (mw - ww) / 2;
-    let y = my
-        + match position {
-            "top" => mh / 10,
-            "bottom" => mh * 7 / 10,
-            _ => (mh - wh) / 2, // center
-        };
+    let (x, y) = if fullscreen {
+        let ww = fullscreen_width().min(mw);
+        (mx + (mw - ww) / 2, my + 40)
+    } else {
+        let (ww, wh) = (WIN_W, WIN_H);
+        let y = my
+            + match position {
+                "top" => mh / 10,
+                "bottom" => mh * 7 / 10,
+                _ => (mh - wh) / 2, // center
+            };
+        (mx + (mw - ww) / 2, y)
+    };
     let _ = std::process::Command::new("xdotool")
         .args([
             "getactivewindow",
@@ -722,12 +1018,60 @@ fn ensure_assets() {
         ("Dark-apps.svg", EMB_APPS),
         ("Dark-Files.svg", EMB_FILES),
         ("Dark-search.svg", EMB_SEARCH),
+        ("Dark-Ai.svg", EMB_AI),
+        ("Light-Clipboard.svg", EMB_CLIPBOARD_LIGHT),
+        ("Light-apps.svg", EMB_APPS_LIGHT),
+        ("Light-Files.svg", EMB_FILES_LIGHT),
+        ("Light-search.svg", EMB_SEARCH_LIGHT),
+        ("Light-AI.svg", EMB_AI_LIGHT),
+        ("Dark-pointer-Down.svg", EMB_DOWN),
+        ("Dark-pointer-up.svg", EMB_UP),
+        ("Light-pointer-Down.svg", EMB_DOWN_LIGHT),
+        ("Light-pointer-up.svg", EMB_UP_LIGHT),
     ] {
         let p = dir.join(name);
         if !p.exists() {
             let _ = std::fs::write(&p, bytes);
         }
     }
+}
+
+/// An expand (down) or collapse (up) arrow image, themed light/dark.
+fn pointer_image(expanded: bool) -> Option<Image> {
+    let file = match (expanded, prefer_dark()) {
+        (false, true) => "Dark-pointer-Down.svg",
+        (false, false) => "Light-pointer-Down.svg",
+        (true, true) => "Dark-pointer-up.svg",
+        (true, false) => "Light-pointer-up.svg",
+    };
+    let path = asset_dir()?.join(file);
+    path.exists().then(|| Image::from_file(path))
+}
+
+/// Whether the active GTK theme is a dark one. Used to pick light vs dark
+/// section icons (the CSS colours follow the theme on their own).
+pub(crate) fn prefer_dark() -> bool {
+    if let Some(s) = gtk4::Settings::default() {
+        if s.property::<bool>("gtk-application-prefer-dark-theme") {
+            return true;
+        }
+        return s
+            .property::<String>("gtk-theme-name")
+            .to_lowercase()
+            .contains("dark");
+    }
+    true
+}
+
+/// Path to the theme-appropriate AI icon, used as the AI result's row icon.
+pub(crate) fn ai_row_icon() -> Option<String> {
+    let file = if prefer_dark() {
+        "Dark-Ai.svg"
+    } else {
+        "Light-AI.svg"
+    };
+    let p = asset_dir()?.join(file);
+    p.exists().then(|| p.to_string_lossy().to_string())
 }
 
 /// Install a desktop entry so the window manager can match grun's window to its
@@ -847,7 +1191,7 @@ fn open_settings(
     registry: Rc<RefCell<Registry>>,
     refresh: Rc<dyn Fn()>,
     history: Rc<RefCell<History>>,
-) {
+) -> Window {
     let outer = GtkBox::new(Orientation::Vertical, 6);
     outer.set_margin_top(18);
     outer.set_margin_bottom(18);
@@ -864,15 +1208,24 @@ fn open_settings(
     outer.append(&list);
 
     // Apply a config change everywhere: persist, rebuild registry, re-run query.
+    // Rebuilding the registry re-enumerates every installed app, so we defer the
+    // work to the next idle tick — that lets a toggle switch finish its animation
+    // immediately instead of stuttering while the rebuild runs.
     let apply: Rc<dyn Fn()> = {
         let cfg = cfg.clone();
         let registry = registry.clone();
         let refresh = refresh.clone();
         let history = history.clone();
         Rc::new(move || {
-            cfg.borrow().save();
-            *registry.borrow_mut() = Registry::from_config(&cfg.borrow(), &history);
-            refresh();
+            let cfg = cfg.clone();
+            let registry = registry.clone();
+            let refresh = refresh.clone();
+            let history = history.clone();
+            glib::idle_add_local_once(move || {
+                cfg.borrow().save();
+                *registry.borrow_mut() = Registry::from_config(&cfg.borrow(), &history);
+                refresh();
+            });
         })
     };
 
@@ -983,28 +1336,6 @@ fn open_settings(
     home_title.set_margin_top(12);
     outer.append(&home_title);
 
-    // Clipboard on/off.
-    let clip_row = GtkBox::new(Orientation::Horizontal, 12);
-    let clip_lbl = Label::new(Some("Show clipboard"));
-    clip_lbl.set_halign(Align::Start);
-    clip_lbl.set_hexpand(true);
-    let clip_sw = Switch::new();
-    clip_sw.set_active(cfg.borrow().home_clipboard);
-    clip_sw.set_valign(Align::Center);
-    clip_sw.connect_state_set({
-        let cfg = cfg.clone();
-        let refresh = refresh.clone();
-        move |_, state| {
-            cfg.borrow_mut().home_clipboard = state;
-            cfg.borrow().save();
-            refresh();
-            glib::Propagation::Proceed
-        }
-    });
-    clip_row.append(&clip_lbl);
-    clip_row.append(&clip_sw);
-    outer.append(&clip_row);
-
     let cur_apps = cfg.borrow().home_apps_mode.clone();
     add_choice_row(
         &outer,
@@ -1052,46 +1383,54 @@ fn open_settings(
         },
     );
 
+    // --- Toggles, grouped together ---
+    let toggles_title = Label::new(Some("Options"));
+    toggles_title.add_css_class("grun-settings-title");
+    toggles_title.set_halign(Align::Start);
+    toggles_title.set_margin_top(12);
+    outer.append(&toggles_title);
+
+    // Show the clipboard section on the home dashboard.
+    add_switch_row(&outer, "Show clipboard", cfg.borrow().home_clipboard, {
+        let cfg = cfg.clone();
+        let refresh = refresh.clone();
+        Rc::new(move |state| {
+            cfg.borrow_mut().home_clipboard = state;
+            let cfg = cfg.clone();
+            let refresh = refresh.clone();
+            glib::idle_add_local_once(move || {
+                cfg.borrow().save();
+                refresh();
+            });
+        })
+    });
+
     // Match app descriptions/keywords too (e.g. "screenshot" → Flameshot).
-    let desc_row = GtkBox::new(Orientation::Horizontal, 12);
-    let desc_lbl = Label::new(Some("Search app descriptions"));
-    desc_lbl.set_halign(Align::Start);
-    desc_lbl.set_hexpand(true);
-    let desc_sw = Switch::new();
-    desc_sw.set_active(cfg.borrow().search_descriptions);
-    desc_sw.set_valign(Align::Center);
-    desc_sw.connect_state_set({
+    add_switch_row(&outer, "Search app descriptions", cfg.borrow().search_descriptions, {
         let cfg = cfg.clone();
         let registry = registry.clone();
         let refresh = refresh.clone();
         let history = history.clone();
-        move |_, state| {
+        Rc::new(move |state| {
             cfg.borrow_mut().search_descriptions = state;
-            cfg.borrow().save();
-            *registry.borrow_mut() = Registry::from_config(&cfg.borrow(), &history);
-            refresh();
-            glib::Propagation::Proceed
-        }
+            let cfg = cfg.clone();
+            let registry = registry.clone();
+            let refresh = refresh.clone();
+            let history = history.clone();
+            glib::idle_add_local_once(move || {
+                cfg.borrow().save();
+                *registry.borrow_mut() = Registry::from_config(&cfg.borrow(), &history);
+                refresh();
+            });
+        })
     });
-    desc_row.append(&desc_lbl);
-    desc_row.append(&desc_sw);
-    outer.append(&desc_row);
 
     // Start on login (writes/removes an autostart .desktop).
-    let auto_row = GtkBox::new(Orientation::Horizontal, 12);
-    let auto_lbl = Label::new(Some("Start on login"));
-    auto_lbl.set_halign(Align::Start);
-    auto_lbl.set_hexpand(true);
-    let auto_sw = Switch::new();
-    auto_sw.set_active(autostart_enabled());
-    auto_sw.set_valign(Align::Center);
-    auto_sw.connect_state_set(|_, state| {
-        set_autostart(state);
-        glib::Propagation::Proceed
+    add_switch_row(&outer, "Start on login", autostart_enabled(), {
+        Rc::new(move |state| {
+            glib::idle_add_local_once(move || set_autostart(state));
+        })
     });
-    auto_row.append(&auto_lbl);
-    auto_row.append(&auto_sw);
-    outer.append(&auto_row);
 
     // --- Actions per category (reorder / enable) ---
     let act_title = Label::new(Some("Actions per category"));
@@ -1103,6 +1442,7 @@ fn open_settings(
         add_reorderable_actions(&outer, category, cfg.clone(), refresh.clone());
     }
 
+    add_home_hidden(&outer, history.clone(), refresh.clone());
     add_hidden_files(&outer, history.clone(), refresh.clone());
 
     let save_btn = Button::with_label("Save & Close");
@@ -1133,9 +1473,109 @@ fn open_settings(
         }
     });
     win.present();
+    win
 }
 
 /// A list of hidden files, each with a Restore button to un-hide it.
+/// Apps and files the user removed from the home dashboard, each with a Restore
+/// button. These are home-only hides (the items still show up in search).
+fn add_home_hidden(outer: &GtkBox, history: Rc<RefCell<History>>, refresh: Rc<dyn Fn()>) {
+    let header = Label::new(Some("Hidden from home"));
+    header.add_css_class("grun-settings-title");
+    header.set_halign(Align::Start);
+    header.set_margin_top(12);
+    outer.append(&header);
+
+    let list = GtkBox::new(Orientation::Vertical, 4);
+    outer.append(&list);
+
+    let slot: Rc<RefCell<Option<Rc<dyn Fn()>>>> = Rc::new(RefCell::new(None));
+    let rebuild: Rc<dyn Fn()> = {
+        let slot = slot.clone();
+        let list = list.clone();
+        let history = history.clone();
+        let refresh = refresh.clone();
+        Rc::new(move || {
+            while let Some(c) = list.first_child() {
+                list.remove(&c);
+            }
+            let apps = history.borrow().home_hidden_apps();
+            let files = history.borrow().home_hidden_files();
+            if apps.is_empty() && files.is_empty() {
+                let none = Label::new(Some("None"));
+                none.add_css_class("grun-sub");
+                none.set_halign(Align::Start);
+                list.append(&none);
+                return;
+            }
+            // Apps: resolve the .desktop id to a friendly name where we can.
+            for id in apps {
+                let name = gtk4::gio::DesktopAppInfo::new(&id)
+                    .map(|a| a.display_name().to_string())
+                    .unwrap_or_else(|| id.trim_end_matches(".desktop").to_string());
+                let row = home_hidden_row(&format!("{name}  ·  App"), &id);
+                let restore = Button::with_label("Restore");
+                restore.connect_clicked({
+                    let slot = slot.clone();
+                    let history = history.clone();
+                    let refresh = refresh.clone();
+                    let id = id.clone();
+                    move |_| {
+                        history.borrow_mut().unhide_home_app(&id);
+                        history.borrow().save();
+                        refresh();
+                        if let Some(rb) = slot.borrow().clone() {
+                            rb();
+                        }
+                    }
+                });
+                row.append(&restore);
+                list.append(&row);
+            }
+            // Files: show the basename, tooltip the full path.
+            for path in files {
+                let name = std::path::Path::new(&path)
+                    .file_name()
+                    .map(|n| n.to_string_lossy().to_string())
+                    .unwrap_or_else(|| path.clone());
+                let row = home_hidden_row(&format!("{name}  ·  File"), &path);
+                let restore = Button::with_label("Restore");
+                restore.connect_clicked({
+                    let slot = slot.clone();
+                    let history = history.clone();
+                    let refresh = refresh.clone();
+                    let path = path.clone();
+                    move |_| {
+                        history.borrow_mut().unhide_home_file(&path);
+                        history.borrow().save();
+                        refresh();
+                        if let Some(rb) = slot.borrow().clone() {
+                            rb();
+                        }
+                    }
+                });
+                row.append(&restore);
+                list.append(&row);
+            }
+        })
+    };
+    *slot.borrow_mut() = Some(rebuild.clone());
+    rebuild();
+}
+
+/// A row for the "Hidden from home" list: an ellipsized label (tooltip = `tip`)
+/// that expands, ready for a trailing Restore button.
+fn home_hidden_row(text: &str, tip: &str) -> GtkBox {
+    let row = GtkBox::new(Orientation::Horizontal, 8);
+    let lbl = Label::new(Some(text));
+    lbl.set_halign(Align::Start);
+    lbl.set_hexpand(true);
+    lbl.set_ellipsize(gtk4::pango::EllipsizeMode::Middle);
+    lbl.set_tooltip_text(Some(tip));
+    row.append(&lbl);
+    row
+}
+
 fn add_hidden_files(outer: &GtkBox, history: Rc<RefCell<History>>, refresh: Rc<dyn Fn()>) {
     let header = Label::new(Some("Hidden files"));
     header.add_css_class("grun-settings-title");
@@ -1213,6 +1653,15 @@ fn add_reorderable_actions(
     header.set_margin_top(8);
     outer.append(&header);
 
+    // For Search/AI the topmost enabled entry is the default (Enter) action.
+    if config::primary_selectable(category) {
+        let hint = Label::new(Some("Top enabled = default (Enter); the rest are side actions"));
+        hint.add_css_class("grun-sub");
+        hint.set_halign(Align::Start);
+        hint.set_wrap(true);
+        outer.append(&hint);
+    }
+
     let list = GtkBox::new(Orientation::Vertical, 4);
     outer.append(&list);
 
@@ -1270,8 +1719,12 @@ fn add_reorderable_actions(
                     let refresh = refresh.clone();
                     move |_, state| {
                         cfg.borrow_mut().set_action_enabled(category, i, state);
-                        cfg.borrow().save();
-                        refresh();
+                        let cfg = cfg.clone();
+                        let refresh = refresh.clone();
+                        glib::idle_add_local_once(move || {
+                            cfg.borrow().save();
+                            refresh();
+                        });
                         glib::Propagation::Proceed
                     }
                 });
@@ -1314,6 +1767,16 @@ fn perform(action: &Action, history: &Rc<RefCell<History>>) -> bool {
             history.borrow().save();
             false
         }
+        Action::HideHomeApp(id) => {
+            history.borrow_mut().hide_home_app(id);
+            history.borrow().save();
+            false
+        }
+        Action::HideHomeFile(path) => {
+            history.borrow_mut().hide_home_file(&path.to_string_lossy());
+            history.borrow().save();
+            false
+        }
         Action::LaunchApp(info) => {
             if let Some(id) = info.id() {
                 history.borrow_mut().record_app_launch(id.as_str());
@@ -1336,6 +1799,9 @@ fn perform(action: &Action, history: &Rc<RefCell<History>>) -> bool {
 }
 
 /// Reorder and filter a match's secondary actions per the category's config.
+/// For *primary-selectable* categories (Search, AI) the first enabled action
+/// becomes the match's default (Enter) action and the rest stay as side actions,
+/// so reordering in settings changes which engine/assistant Enter uses.
 fn apply_action_prefs(m: &mut Match, cfg: &Config) {
     let order = cfg.action_order(m.category);
     if order.is_empty() {
@@ -1352,7 +1818,32 @@ fn apply_action_prefs(m: &mut Match, cfg: &Config) {
         }
     }
     new.extend(remaining); // unknown ids stay
+
+    if config::primary_selectable(m.category) && !new.is_empty() {
+        let (_, label, action) = new.remove(0);
+        m.subtitle = format!("Press Enter to use {label}");
+        m.action = action;
+    }
     m.actions = new;
+}
+
+/// A settings row with a label and an on/off switch. `on_set` runs whenever the
+/// switch flips. Used to keep all the toggles styled and grouped consistently.
+fn add_switch_row(parent: &GtkBox, label: &str, active: bool, on_set: Rc<dyn Fn(bool)>) {
+    let row = GtkBox::new(Orientation::Horizontal, 12);
+    let lbl = Label::new(Some(label));
+    lbl.set_halign(Align::Start);
+    lbl.set_hexpand(true);
+    let sw = Switch::new();
+    sw.set_active(active);
+    sw.set_valign(Align::Center);
+    sw.connect_state_set(move |_, state| {
+        on_set(state);
+        glib::Propagation::Proceed
+    });
+    row.append(&lbl);
+    row.append(&sw);
+    parent.append(&row);
 }
 
 /// A settings row: a label and a set of choice buttons that call `pick(value)`.
@@ -1413,13 +1904,64 @@ fn section_header(category: &str) -> GtkBox {
     h
 }
 
-/// Load a category's icon from the Assets folder, if present.
+/// CSS class colouring a package-type tag (deb/system red, AppImage blue,
+/// Flatpak green, Snap orange).
+fn tag_class(tag: &str) -> &'static str {
+    match tag {
+        "AppImage" => "grun-tag-appimage",
+        "Flatpak" => "grun-tag-flatpak",
+        "Snap" => "grun-tag-snap",
+        _ => "grun-tag-system", // "System" (deb/native) and anything else
+    }
+}
+
+/// Home dashboard section header: the section header plus, when `expandable`, a
+/// right-aligned expand/collapse toggle. Returns the header and the toggle (to
+/// wire) if one was added.
+fn home_section_header(category: &str, expandable: bool, expanded: bool) -> (GtkBox, Option<Button>) {
+    let bar = GtkBox::new(Orientation::Horizontal, 8);
+    bar.set_hexpand(true);
+    let inner = section_header(category);
+    inner.set_hexpand(true);
+    bar.append(&inner);
+    if expandable {
+        // Label + arrow icon together.
+        let content = GtkBox::new(Orientation::Horizontal, 6);
+        let lbl = Label::new(Some(if expanded { "collapse" } else { "expand" }));
+        content.append(&lbl);
+        if let Some(img) = pointer_image(expanded) {
+            img.set_pixel_size(16);
+            content.append(&img);
+        }
+        let btn = Button::new();
+        btn.set_child(Some(&content));
+        btn.set_tooltip_text(Some(if expanded { "Collapse" } else { "Show more" }));
+        btn.add_css_class("grun-chip");
+        btn.set_valign(Align::Center);
+        btn.set_halign(Align::End);
+        btn.set_margin_end(8);
+        bar.append(&btn);
+        (bar, Some(btn))
+    } else {
+        (bar, None)
+    }
+}
+
+/// Load a category's icon from the Assets folder, if present, picking the dark
+/// or light variant to suit the active system theme.
 fn section_icon(category: &str) -> Option<Image> {
-    let file = match category {
-        "Clipboard" => "Dark-Clipboard.svg",
-        "Apps" => "Dark-apps.svg",
-        "Files" => "Dark-Files.svg",
-        "Search" => "Dark-search.svg",
+    let dark = prefer_dark();
+    let file = match (category, dark) {
+        ("Clipboard", true) => "Dark-Clipboard.svg",
+        ("Clipboard", false) => "Light-Clipboard.svg",
+        ("Apps", true) => "Dark-apps.svg",
+        ("Apps", false) => "Light-apps.svg",
+        ("Files", true) => "Dark-Files.svg",
+        ("Files", false) => "Light-Files.svg",
+        ("Search", true) => "Dark-search.svg",
+        ("Search", false) => "Light-search.svg",
+        ("AI", true) => "Dark-Ai.svg",
+        ("AI", false) => "Light-AI.svg",
         _ => return None,
     };
     let path = asset_dir()?.join(file);
@@ -1433,23 +1975,31 @@ fn section_icon(category: &str) -> Option<Image> {
 /// Build a dashboard card matching the container mockups: a left column with
 /// the letter + side-action buttons, and a roomy main area (icon/image + title
 /// + path/tag). Returns the card and its side-action buttons for wiring.
-fn build_card(letter: char, m: &Match) -> (GtkBox, Vec<Button>) {
+fn build_card(letter: Option<char>, m: &Match) -> (GtkBox, Vec<Button>) {
     // Left column: letter badge over stacked side-action buttons.
     let left = GtkBox::new(Orientation::Vertical, 6);
     left.set_valign(Align::Start);
     left.set_size_request(96, -1);
 
     // The letter sits in the first box of the column (same shape as the side
-    // actions), with the side-action buttons stacked below it.
-    let badge = Label::new(Some(&letter.to_string()));
-    badge.add_css_class("grun-card-letter");
-    badge.set_hexpand(true);
-    left.append(&badge);
+    // actions), with the side-action buttons stacked below it. Full-screen cards
+    // omit it.
+    if let Some(letter) = letter {
+        let badge = Label::new(Some(&letter.to_string()));
+        badge.add_css_class("grun-card-letter");
+        badge.set_hexpand(true);
+        left.append(&badge);
+    }
 
     let mut chips = Vec::new();
     for (_id, label, _) in m.actions.iter() {
-        let b = Button::with_label(label);
+        // Bound the button label so a long action name can't widen the card.
+        let lbl = Label::new(Some(label));
+        lbl.set_ellipsize(gtk4::pango::EllipsizeMode::End);
+        lbl.set_max_width_chars(10);
+        let b = Button::builder().child(&lbl).build();
         b.add_css_class("grun-side");
+        b.set_hexpand(true);
         left.append(&b);
         chips.push(b);
     }
@@ -1468,10 +2018,13 @@ fn build_card(letter: char, m: &Match) -> (GtkBox, Vec<Button>) {
     };
 
     if m.category == "Clipboard" && !is_image_clip && clip_img.is_none() {
-        // Text clip: lots of room, wrapped over several lines.
+        // Text clip: wrapped over several lines, but bounded so the card keeps
+        // its fixed width instead of stretching to fit a long line.
         let t = Label::new(Some(&m.title));
         t.set_wrap(true);
         t.set_lines(3);
+        t.set_max_width_chars(16);
+        t.set_width_chars(16);
         t.set_ellipsize(gtk4::pango::EllipsizeMode::End);
         t.set_halign(Align::Start);
         t.set_xalign(0.0);
@@ -1498,13 +2051,17 @@ fn build_card(letter: char, m: &Match) -> (GtkBox, Vec<Button>) {
         if let Some(tag) = &m.tag {
             let badge = Label::new(Some(tag));
             badge.add_css_class("grun-tag");
-            badge.set_halign(Align::End);
+            badge.add_css_class(tag_class(tag));
+            // Centred on its own line directly under the icon.
+            badge.set_halign(Align::Center);
             main.append(&badge);
         }
         // Skip the redundant "Image" title for image clips.
         if !(is_image_clip || clip_img.is_some()) {
             let title = Label::new(Some(&m.title));
             title.set_ellipsize(gtk4::pango::EllipsizeMode::End);
+            // Bound the natural width so a long name can't widen the card.
+            title.set_max_width_chars(16);
             title.set_halign(Align::Center);
             title.add_css_class("grun-card-title");
             main.append(&title);
@@ -1514,6 +2071,7 @@ fn build_card(letter: char, m: &Match) -> (GtkBox, Vec<Button>) {
     if !m.subtitle.is_empty() && m.category == "Files" {
         let sub = Label::new(Some(&m.subtitle));
         sub.set_ellipsize(gtk4::pango::EllipsizeMode::Start);
+        sub.set_max_width_chars(16);
         sub.set_halign(Align::Center);
         sub.add_css_class("grun-sub");
         main.append(&sub);
@@ -1521,7 +2079,12 @@ fn build_card(letter: char, m: &Match) -> (GtkBox, Vec<Button>) {
 
     let card = GtkBox::new(Orientation::Horizontal, 12);
     card.add_css_class("grun-card");
-    card.set_hexpand(true);
+    // Fixed size so the cards form a uniform grid (independent of button count)
+    // and wrap into rows; the main area expands within that, and wrapping text
+    // is bounded by it.
+    card.set_size_request(CARD_W, CARD_H);
+    card.set_hexpand(false);
+    card.set_vexpand(false);
     card.append(&left);
     card.append(&main);
     (card, chips)
@@ -1556,6 +2119,13 @@ fn cached_texture(path: &str, w: i32, h: i32) -> Option<gdk::Texture> {
 fn icon_image(name: Option<&str>, size: i32) -> Image {
     if let Some(s) = name {
         if s.starts_with('/') && std::path::Path::new(s).exists() {
+            // SVGs (e.g. the AI icon) load directly so they render crisply at any
+            // size; raster paths go through the scaled-texture cache.
+            if s.to_lowercase().ends_with(".svg") {
+                let img = Image::from_file(s);
+                img.set_pixel_size(size);
+                return img;
+            }
             if let Some(tex) = cached_texture(s, size, size) {
                 let img = Image::from_paintable(Some(&tex));
                 img.set_pixel_size(size);
@@ -1570,10 +2140,11 @@ fn icon_image(name: Option<&str>, size: i32) -> Image {
 
 /// A scaled image thumbnail from a file path (cached), or a generic icon.
 fn thumbnail(path: &str) -> Image {
-    match cached_texture(path, 150, 96) {
+    // Sized to sit inside a fixed card's main area without widening it.
+    match cached_texture(path, 120, 80) {
         Some(tex) => {
             let img = Image::from_paintable(Some(&tex));
-            img.set_size_request(150, 96);
+            img.set_size_request(120, 80);
             img
         }
         None => {
@@ -1627,6 +2198,7 @@ fn build_grouped_row(letter: char, m: &Match) -> (GtkBox, Vec<Button>) {
     if let Some(tag) = &m.tag {
         let badge = Label::new(Some(tag));
         badge.add_css_class("grun-tag");
+        badge.add_css_class(tag_class(tag));
         badge.set_valign(Align::Center);
         title_row.append(&badge);
     }

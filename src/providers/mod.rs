@@ -9,19 +9,21 @@ use crate::state::History;
 use std::cell::RefCell;
 use std::rc::Rc;
 
+mod ai;
 mod apps;
 mod calc;
-mod claude;
 mod command;
 mod files;
-mod google;
+mod power;
+mod search;
 
+pub use ai::AiProvider;
 pub use apps::AppsProvider;
 pub use calc::CalcProvider;
-pub use claude::ClaudeProvider;
 pub use command::CommandProvider;
 pub use files::FilesProvider;
-pub use google::GoogleProvider;
+pub use power::PowerProvider;
+pub use search::SearchProvider;
 
 // Row builders reused by the empty-state dashboard.
 pub use apps::make_match as app_to_match;
@@ -43,11 +45,26 @@ fn make(id: &str, cfg: &Config, history: &Rc<RefCell<History>>) -> Option<Box<dy
         "calc" => Box::new(CalcProvider),
         "apps" => Box::new(AppsProvider::new(cfg.search_descriptions, history.clone())),
         "files" => Box::new(FilesProvider::new()),
-        "google" => Box::new(GoogleProvider::new()),
-        "claude" => Box::new(ClaudeProvider),
+        "search" => Box::new(SearchProvider),
+        "ai" => Box::new(AiProvider),
+        "power" => Box::new(PowerProvider),
         "command" => Box::new(CommandProvider),
         _ => return None,
     })
+}
+
+/// Minimal percent-encoding for a URL query component (shared by the web search
+/// and AI providers).
+pub(crate) fn url_encode(s: &str) -> String {
+    let mut o = String::new();
+    for b in s.bytes() {
+        match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => o.push(b as char),
+            b' ' => o.push('+'),
+            _ => o.push_str(&format!("%{:02X}", b)),
+        }
+    }
+    o
 }
 
 pub struct Registry {
